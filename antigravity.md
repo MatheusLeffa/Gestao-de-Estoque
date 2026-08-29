@@ -158,9 +158,14 @@ stateDiagram-v2
 > O **Tech Lead (IA Orquestradora)** DEVE sempre, sempre que possível, utilizar e delegar as demandas técnicas aos subagentes especializados conforme a necessidade e especialidade de cada um.
 > As tarefas devem ser formalmente divididas e executadas sob a responsabilidade do subagente especialista em seu domínio, assegurando foco técnico, rastreabilidade e máxima qualidade na entrega.
 
-O **Tech Lead (Orquestrador Principal)** coordena e divide as demandas entre os seguintes subagentes especializados:
+O **Tech Lead (Orquestrador Principal)** coordena e divide as demandas entre os seguintes subagentes especializados, cujas configurações, regras e runbooks residem na pasta [`.agents/`](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/.agents) e no [`AGENTS.md`](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/AGENTS.md):
 
-1. 🏛️ **`cloud-db-architect` (Supabase, SQL, RLS, Realtime & Cloud)**:
+1. 🛡️ **`security-auditor` (Auditoria de Segurança & Zero Chaves Expostas)**:
+   - Execução mandatória de varredura de credenciais (`scripts/security-audit.mjs`) antes de qualquer commit ou entrega.
+   - Bloqueio de qualquer tentativa de expor tokens, chaves privadas ou URLs em fallbacks hardcoded.
+   - Auditoria contínua do repositório Git e políticas de RLS.
+
+2. 🏛️ **`cloud-db-architect` (Supabase, SQL, RLS, Realtime & Cloud)**:
    - Modelagem relacional PostgreSQL no Supabase, scripts DDL e migrations.
    - Políticas de Row Level Security (RLS) e infraestrutura Vercel / Supabase Free-tier.
    - Stored Procedures RPC com transações atômicas (`SELECT ... FOR UPDATE`) para concorrência de estoque.
