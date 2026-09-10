@@ -132,10 +132,9 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
 
   const { data, error } = await supabase.rpc('transition_order_status', {
     p_order_id: params.orderId,
-    p_to_status: params.toStatus,
-    p_reason: params.reason ?? null,
+    p_new_status: params.toStatus,
+    p_reason: params.delayReason ?? params.reason ?? null,
     p_completion_type: params.completionType ?? null,
-    p_delay_reason: params.delayReason ?? null,
   });
 
   if (error) {
@@ -174,4 +173,66 @@ export async function cancelOrder(orderId: string, currentStatus: OrderStatus): 
   }
 
   return { success: false, error: 'Este pedido não pode mais ser cancelado.' };
+}
+
+// ─── Busca de Todos os Pedidos (Depósito & Admin) ────────────────────────────
+
+export async function fetchAllOrders(limit: number = 50): Promise<Order[]> {
+  const { data, error } = await supabase
+    .from('orders')
+    .select(`
+      *,
+      restaurant:restaurants (*),
+      order_items (
+        *,
+        product:products (*)
+      ),
+      order_status_logs (*)
+    `)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error('[order-service] fetchAllOrders error:', error.message);
+    return [];
+  }
+
+  return (data ?? []) as Order[];
+}
+
+// ─── Atualização de Quantidades Aprovadas na Triagem ─────────────────────────
+
+export async function updateApprovedItems(
+  items: { itemId: string; approvedQty: number }[]
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const promises = items.map(({ itemId, approvedQty }) =>
+      supabase
+        .from('order_items')
+        .update({ approved_qty: approvedQty })
+        .eq('id', itemId)
+    );
+
+    const results = await Promise.all(promises);
+    const hasError = results.some((r) => r.error);
+
+    if (hasError) {
+      return { success: false, error: 'Erro ao atualizar alguns itens do pedido.' };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message ?? 'Erro inesperado ao salvar triagem.' };
+  }
+}
+
+// ─── Aprovação de Cancelamento Solicitado pelo Restaurante ───────────────────
+
+export async function approvePendingCancellation(orderId: string): Promise<TransitionStatusResult> {
+  return transitionOrderStatus({
+    orderId,
+    fromStatus: 'CANCELAMENTO_PENDENTE',
+    toStatus: 'CANCELADO',
+    reason: 'Cancelamento aprovado pelo operador do Depósito Central. Saldo estornado.',
+  });
 }

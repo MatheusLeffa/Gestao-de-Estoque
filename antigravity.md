@@ -219,15 +219,15 @@ O **Tech Lead (Orquestrador Principal)** coordena e divide as demandas entre os 
   - Criação das migrations SQL, políticas RLS, triggers de auditoria, Stored Procedures `place_order_with_reservation()`, `transition_order_status()`, `restock_product()`, script consolidado `complete_setup.sql` e dados de seed.
   - *Agentes:* `cloud-db-architect` + `qa-devops-agent` + `doc-specialist`.
 
-- [ ] **Fase 2: Motor de Estados & Lógica de Negócio**
+- [x] **Fase 2: Motor de Estados & Lógica de Negócio**
   - Implementação das funções de transição de status, controle de atrasos com motivos obrigatórios, cancelamentos e devolução atômica de estoque.
   - *Agentes:* `backend-workflow-engine` + `cloud-db-architect`.
 
-- [ ] **Fase 3: Módulo do Restaurante (Mobile-First)**
+- [x] **Fase 3: Módulo do Restaurante (Mobile-First)**
   - Catálogo de insumos com busca e filtros, checklist de pedido com bloqueio de saldo, carrinho em Bottom Sheet, tela de timeline e conferência na entrega (`Total`, `Parcial`, `Não Entregue`).
   - *Agentes:* `ui-ux-designer` + `frontend-engineer` + `backend-workflow-engine`.
 
-- [ ] **Fase 4: Módulo do Estoque Central**
+- [x] **Fase 4: Módulo do Estoque Central**
   - Mini-dashboard de métricas no topo, efeito sonoro (áudio chime), busca e filtros de insumos (incluindo filtro de estoque baixo), modal de reabastecimento manual e painel de triagem/separação de pedidos.
   - *Agentes:* `ui-ux-designer` + `frontend-engineer` + `backend-workflow-engine`.
 
