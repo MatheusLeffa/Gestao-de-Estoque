@@ -26,6 +26,7 @@ import {
   Check,
   AlertOctagon,
   XCircle,
+  Edit3,
 } from 'lucide-react';
 import { useDemo } from '@/contexts/DemoContext';
 import { chimeService } from '@/lib/audio/chime';
@@ -170,24 +171,30 @@ export default function EstoquePage() {
 
   // ─── Ações de Pedidos ────────────────────────────────────────────────────────
 
-  // Iniciar Separação (ABERTO -> EM_ANALISE)
+  // Iniciar Separação (ABERTO -> EM_ANALISE) e abrir modal de análise imediatamente
   const handleStartAnalysis = async (order: Order) => {
     setIsSubmittingAction(true);
     try {
-      const res = await transitionOrderStatus({
-        orderId: order.id,
-        fromStatus: 'ABERTO',
-        toStatus: 'EM_ANALISE',
-        reason: 'Separação e triagem de itens iniciada no depósito central.',
-      });
+      if (order.status === 'ABERTO') {
+        const res = await transitionOrderStatus({
+          orderId: order.id,
+          fromStatus: 'ABERTO',
+          toStatus: 'EM_ANALISE',
+          reason: 'Separação e análise iniciadas pelo operador do depósito central.',
+        });
 
-      if (res.success) {
+        if (!res.success) {
+          alert(res.error ?? 'Falha ao iniciar separação.');
+          return;
+        }
+
         if (soundEnabled) chimeService.playSuccessPing();
         showToast(`Pedido #${order.id.slice(0, 8).toUpperCase()} agora está Em Análise!`);
         await loadData(true);
-      } else {
-        alert(res.error ?? 'Falha ao iniciar separação.');
       }
+
+      // Abre imediatamente a tela de separação e análise (anexo 2)
+      setSelectedOrderForApproval({ ...order, status: 'EM_ANALISE' });
     } finally {
       setIsSubmittingAction(false);
     }
@@ -219,15 +226,16 @@ export default function EstoquePage() {
   // Submeter aprovação / atraso via OrderApprovalModal
   const handleApproveOrderModal = async (
     orderId: string,
-    approvedItems: { itemId: string; approvedQty: number }[],
+    approvedItems: { itemId: string; approvedQty: number; reductionReason?: string }[],
     action: 'approve' | 'delay',
-    delayReason?: string
+    delayReason?: string,
+    depositNotes?: string
   ) => {
     setIsSubmittingAction(true);
     try {
-      // 1. Atualiza quantidades aprovadas nos itens
-      if (action === 'approve' && approvedItems.length > 0) {
-        const itemRes = await updateApprovedItems(approvedItems);
+      // 1. Atualiza quantidades aprovadas, justificativas de redução individual e observações do depósito
+      if (approvedItems.length > 0 || depositNotes) {
+        const itemRes = await updateApprovedItems(approvedItems, orderId, depositNotes);
         if (!itemRes.success) {
           alert(itemRes.error ?? 'Erro ao salvar quantidades aprovadas.');
           return;
@@ -237,19 +245,12 @@ export default function EstoquePage() {
       const targetOrder = orders.find((o) => o.id === orderId);
       if (!targetOrder) return;
 
+      const currentStatus = targetOrder.status === 'ABERTO' ? 'EM_ANALISE' : targetOrder.status;
+
       if (action === 'approve') {
-        // Se estava ABERTO, transiciona para EM_ANALISE e depois EM_TRANSITO
-        if (targetOrder.status === 'ABERTO') {
-          await transitionOrderStatus({
-            orderId,
-            fromStatus: 'ABERTO',
-            toStatus: 'EM_ANALISE',
-            reason: 'Triagem concluída pelo operador do depósito.',
-          });
-        }
         const res = await transitionOrderStatus({
           orderId,
-          fromStatus: targetOrder.status === 'ABERTO' ? 'EM_ANALISE' : targetOrder.status,
+          fromStatus: currentStatus,
           toStatus: 'EM_TRANSITO',
           reason: 'Pedido aprovado com quantidades validadas e expedido para transporte.',
         });
@@ -262,17 +263,9 @@ export default function EstoquePage() {
         showToast(`✅ Pedido #${orderId.slice(0, 8).toUpperCase()} aprovado e despachado!`);
       } else {
         // Registrar Atraso
-        if (targetOrder.status === 'ABERTO') {
-          await transitionOrderStatus({
-            orderId,
-            fromStatus: 'ABERTO',
-            toStatus: 'EM_ANALISE',
-            reason: 'Triagem iniciada.',
-          });
-        }
         const res = await transitionOrderStatus({
           orderId,
-          fromStatus: targetOrder.status === 'ABERTO' ? 'EM_ANALISE' : targetOrder.status,
+          fromStatus: currentStatus,
           toStatus: 'EM_ATRASO',
           delayReason: delayReason ?? 'Atraso operacional no depósito.',
         });
@@ -758,28 +751,27 @@ export default function EstoquePage() {
 
                         {/* Ações contextuais de acordo com o status */}
                         {order.status === 'ABERTO' && (
-                          <>
-                            <button
-                              onClick={() => setSelectedOrderForApproval(order)}
-                              disabled={isSubmittingAction}
-                              className="px-3 py-2 rounded-xl text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 flex items-center gap-1.5 transition-all min-h-[44px]"
-                            >
-                              <span>Triar / Ajustar</span>
-                            </button>
-
-                            <button
-                              onClick={() => handleStartAnalysis(order)}
-                              disabled={isSubmittingAction}
-                              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 flex items-center gap-1.5 shadow-xs transition-all active:scale-95 min-h-[44px]"
-                            >
-                              <Play className="w-3.5 h-3.5 fill-current" />
-                              <span>Iniciar Separação</span>
-                            </button>
-                          </>
+                          <button
+                            onClick={() => handleStartAnalysis(order)}
+                            disabled={isSubmittingAction}
+                            className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 flex items-center gap-1.5 shadow-xs transition-all active:scale-95 min-h-[44px]"
+                          >
+                            <Play className="w-3.5 h-3.5 fill-current" />
+                            <span>Iniciar Separação</span>
+                          </button>
                         )}
 
                         {order.status === 'EM_ANALISE' && (
                           <>
+                            <button
+                              onClick={() => setSelectedOrderForApproval(order)}
+                              disabled={isSubmittingAction}
+                              className="px-3.5 py-2 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 flex items-center gap-1.5 transition-all min-h-[44px]"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>Analisar / Despachar</span>
+                            </button>
+
                             <button
                               onClick={() => setSelectedOrderForApproval(order)}
                               disabled={isSubmittingAction}

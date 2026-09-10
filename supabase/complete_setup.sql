@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS orders (
     delay_reason TEXT,
     completion_type TEXT,
     notes TEXT,
+    deposit_notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -42,7 +43,8 @@ CREATE TABLE IF NOT EXISTS order_items (
     product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
     requested_qty NUMERIC NOT NULL CHECK (requested_qty > 0),
     approved_qty NUMERIC,
-    delivered_qty NUMERIC
+    delivered_qty NUMERIC,
+    reduction_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS order_status_logs (

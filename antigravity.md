@@ -76,11 +76,13 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
   - Modal rápido de entrada/reabastecimento manual de saldo no depósito.
 - **Painel de Pedidos Recebidos & Triagem:**
   - Recebimento de novos pedidos com **Efeito Sonoro (Áudio Chime suave opcional)** e alerta visual em tempo real via Supabase Realtime.
-  - Ações de triagem:
-    - Mover de ABERTO para EM_ANALISE.
-    - Apontar atrasos (EM_ATRASO) com justificativas obrigatórias (*Falta de Produto* ou *Transporte Indisponível*).
-    - Despachar para EM_TRANSITO.
-    - Validar e liberar cancelamentos solicitados pelo restaurante.
+  - Ações de triagem & separação:
+    - **Iniciar Separação com Análise Direta:** O botão único `[Iniciar Separação]` transiciona imediatamente o pedido para `EM_ANALISE` e abre a tela de análise e ajuste de insumos. Se o operador fechar ou cancelar a tela, o pedido permanece mantido em `EM_ANALISE`.
+    - **Justificativa Individual de Redução Obrigatória:** Caso o depósito reduza a quantidade de qualquer item (`approved_qty < requested_qty`), é mandatória a justificativa individual do item (ex: avaria, estoque físico insuficiente, etc.), ficando bloqueado o despacho sem essa explicação.
+    - **Observações Gerais do Depósito:** Campo opcional para recados ao motorista/restaurante (`deposit_notes`).
+    - Apontar atrasos (`EM_ATRASO`) com justificativas obrigatórias (*Falta de Produto* ou *Transporte Indisponível*).
+    - Despachar para `EM_TRANSITO`.
+    - Validar e liberar cancelamentos solicitados pelo restaurante com estorno atômico de estoque.
 
 ### 🍽️ B. Restaurante (Filial)
 - **Catálogo de Insumos & Checklist de Pedido:**
@@ -89,7 +91,10 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
   - Carrinho touch-friendly (Bottom Sheet no mobile) com cálculo automático e validação de checkout.
 - **Acompanhamento do Pedido & Linha do Tempo (Audit Log):**
   - Timeline visual estilo app de entrega com histórico completo de cada mudança de status, horários e motivos de atraso.
-- **Conferência na Entrega (Check-in):**
+- **Conferência Enriquecida na Entrega (Check-in):**
+  - Exibição comparativa dos itens solicitados vs o que foi enviado pelo depósito.
+  - Destaque dos itens reduzidos acompanhados das justificativas individuais registradas pelo operador do depósito.
+  - Exibição de observações gerais do depósito, se houver.
   - Finalização do pedido na entrega marcando o desfecho:
     - `ENTREGUE_TOTAL` (Todos os itens recebidos).
     - `ENTREGUE_PARCIAL` (Recebimento com faltas + campo obrigatório de justificativa).

@@ -51,6 +51,7 @@ export interface Order {
   delay_reason: DelayReason | null;
   completion_type: CompletionType | null;
   notes: string | null;
+  deposit_notes?: string | null;
   created_at: string;
   updated_at: string;
   // Joins
@@ -66,6 +67,7 @@ export interface OrderItem {
   requested_qty: number;
   approved_qty: number | null;
   delivered_qty: number | null;
+  reduction_reason?: string | null;
   // Joins
   product?: Product;
 }

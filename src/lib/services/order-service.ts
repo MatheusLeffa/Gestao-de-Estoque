@@ -202,16 +202,36 @@ export async function fetchAllOrders(limit: number = 50): Promise<Order[]> {
 
 // ─── Atualização de Quantidades Aprovadas na Triagem ─────────────────────────
 
+export interface ApprovedItemPayload {
+  itemId: string;
+  approvedQty: number;
+  reductionReason?: string | null;
+}
+
 export async function updateApprovedItems(
-  items: { itemId: string; approvedQty: number }[]
+  items: ApprovedItemPayload[],
+  orderId?: string,
+  depositNotes?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const promises = items.map(({ itemId, approvedQty }) =>
+    const promises = items.map(({ itemId, approvedQty, reductionReason }) =>
       supabase
         .from('order_items')
-        .update({ approved_qty: approvedQty })
+        .update({
+          approved_qty: approvedQty,
+          reduction_reason: reductionReason ?? null,
+        })
         .eq('id', itemId)
     );
+
+    if (orderId && depositNotes !== undefined) {
+      promises.push(
+        supabase
+          .from('orders')
+          .update({ deposit_notes: depositNotes || null })
+          .eq('id', orderId)
+      );
+    }
 
     const results = await Promise.all(promises);
     const hasError = results.some((r) => r.error);
