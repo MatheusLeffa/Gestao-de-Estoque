@@ -9,6 +9,8 @@ import type {
   PlaceOrderItemPayload,
   PlaceOrderResponse,
   TransitionOrderStatusResponse,
+  ApplyTriageItemPayload,
+  ApplyTriageResponse,
 } from '@/types/database';
 
 // ─── Transições de Status Permitidas (máquina de estados) ────────────────────
@@ -208,42 +210,48 @@ export interface ApprovedItemPayload {
   reductionReason?: string | null;
 }
 
+/**
+ * Aplica a triagem do depósito através da RPC atômica `apply_order_triage`.
+ *
+ * Toda a contabilidade acontece no PostgreSQL, dentro de uma única transação com
+ * `SELECT ... FOR UPDATE`: a diferença reduzida volta imediatamente ao
+ * `current_stock` e gera a devida movimentação em `stock_movements`.
+ *
+ * O banco também é quem exige a justificativa individual de cada redução, de modo
+ * que a regra continua valendo mesmo se a validação da tela for contornada.
+ *
+ * @param orderId Pedido em triagem.
+ * @param depositNotes Observações gerais ao restaurante. `undefined` preserva o
+ *                     valor atual; string vazia limpa o campo.
+ */
 export async function updateApprovedItems(
   items: ApprovedItemPayload[],
   orderId?: string,
   depositNotes?: string
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    const promises = items.map(({ itemId, approvedQty, reductionReason }) =>
-      supabase
-        .from('order_items')
-        .update({
-          approved_qty: approvedQty,
-          reduction_reason: reductionReason ?? null,
-        })
-        .eq('id', itemId)
-    );
-
-    if (orderId && depositNotes !== undefined) {
-      promises.push(
-        supabase
-          .from('orders')
-          .update({ deposit_notes: depositNotes || null })
-          .eq('id', orderId)
-      );
-    }
-
-    const results = await Promise.all(promises);
-    const hasError = results.some((r) => r.error);
-
-    if (hasError) {
-      return { success: false, error: 'Erro ao atualizar alguns itens do pedido.' };
-    }
-
-    return { success: true };
-  } catch (err: any) {
-    return { success: false, error: err.message ?? 'Erro inesperado ao salvar triagem.' };
+): Promise<ApplyTriageResponse> {
+  if (!orderId) {
+    return { success: false, error: 'Pedido não informado para a triagem.' };
   }
+
+  const payload: ApplyTriageItemPayload[] = items.map(
+    ({ itemId, approvedQty, reductionReason }) => ({
+      item_id: itemId,
+      approved_qty: approvedQty,
+      reduction_reason: reductionReason ?? null,
+    })
+  );
+
+  const { data, error } = await supabase.rpc('apply_order_triage', {
+    p_order_id: orderId,
+    p_items: payload,
+    p_deposit_notes: depositNotes ?? null,
+  });
+
+  if (error) {
+    return { success: false, error: `Erro ao aplicar a triagem: ${error.message}` };
+  }
+
+  return data as ApplyTriageResponse;
 }
 
 // ─── Aprovação de Cancelamento Solicitado pelo Restaurante ───────────────────

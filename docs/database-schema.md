@@ -29,6 +29,7 @@ erDiagram
         text unit
         numeric current_stock
         numeric min_stock_alert
+        boolean is_active
         timestamptz created_at
     }
 
@@ -39,6 +40,7 @@ erDiagram
         text delay_reason
         text completion_type
         text notes
+        text deposit_notes
         timestamptz created_at
         timestamptz updated_at
     }
@@ -50,6 +52,7 @@ erDiagram
         numeric requested_qty
         numeric approved_qty
         numeric delivered_qty
+        text reduction_reason
     }
 
     order_status_logs {
@@ -93,7 +96,10 @@ erDiagram
 | `unit` | `TEXT` | `NOT NULL` | Unidade de medida (`KG`, `UN`, `L`, `CX`, `PCT`) |
 | `current_stock` | `NUMERIC` | `NOT NULL DEFAULT 0 CHECK (current_stock >= 0)` | Saldo atual no depósito central |
 | `min_stock_alert`| `NUMERIC` | `NOT NULL DEFAULT 5` | Ponto de pedido para alerta de estoque crítico |
+| `is_active` | `BOOLEAN` | `NOT NULL DEFAULT true` | Insumo visível no catálogo. `false` é o soft-delete: some do catálogo do restaurante e preserva todo o histórico |
 | `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` | Data de cadastro |
+
+> Índice `idx_products_is_active` em `is_active`, usado pelo filtro padrão do catálogo.
 
 ### 2.3 `orders`
 | Coluna | Tipo | Restrições | Descrição |
@@ -103,7 +109,8 @@ erDiagram
 | `status` | `TEXT` | `NOT NULL DEFAULT 'ABERTO'` | Status atual na máquina de estados |
 | `delay_reason` | `TEXT` | `NULL` | Motivo de atraso (*Falta de Produto* / *Transporte*) |
 | `completion_type` | `TEXT` | `NULL` | Desfecho da entrega (`TOTAL`, `PARCIAL`, `NAO_ENTREGUE`) |
-| `notes` | `TEXT` | `NULL` | Observações gerais do pedido |
+| `notes` | `TEXT` | `NULL` | Observações gerais do pedido, escritas pelo restaurante |
+| `deposit_notes` | `TEXT` | `NULL` | Recados do depósito ao motorista e ao restaurante, preenchidos na triagem |
 | `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` | Data e hora de criação |
 | `updated_at` | `TIMESTAMPTZ` | `DEFAULT now()` | Data e hora da última alteração |
 
@@ -114,8 +121,13 @@ erDiagram
 | `order_id` | `UUID` | `REFERENCES orders(id) ON DELETE CASCADE` | Pedido associado |
 | `product_id` | `UUID` | `REFERENCES products(id) ON DELETE RESTRICT` | Insumo requisitado |
 | `requested_qty`| `NUMERIC` | `NOT NULL CHECK (requested_qty > 0)` | Quantidade solicitada pelo restaurante |
-| `approved_qty` | `NUMERIC` | `NULL` | Quantidade aprovada pelo depósito |
+| `approved_qty` | `NUMERIC` | `NULL` | Quantidade aprovada pelo depósito. **É o saldo efetivamente retido do estoque** enquanto o pedido não é terminal |
 | `delivered_qty`| `NUMERIC` | `NULL` | Quantidade recebida na entrega |
+| `reduction_reason` | `TEXT` | `NULL` | Justificativa individual obrigatória quando `approved_qty < requested_qty` |
+
+> O `ON DELETE RESTRICT` em `product_id` é o que torna a remoção definitiva de um
+> insumo impossível assim que ele participa de qualquer pedido — a garantia física
+> de integridade do histórico.
 
 ### 2.5 `order_status_logs`
 | Coluna | Tipo | Restrições | Descrição |
@@ -150,8 +162,56 @@ erDiagram
 2. **`transition_order_status(p_order_id uuid, p_new_status text, p_reason text, p_completion_type text)`**:
    - Valida a transição de status permitida na máquina de estados.
    - Atualiza `orders.status`, `delay_reason`, `completion_type` e `updated_at`.
-   - Se `p_new_status = 'CANCELADO'`, devolve atomicamente o estoque reservado e grava `stock_movements`.
+   - Se `p_new_status = 'CANCELADO'`, devolve atomicamente ao estoque o saldo retido —
+     `COALESCE(approved_qty, requested_qty)`, **nunca `requested_qty` puro** — e grava `stock_movements`.
    - Grava registro de auditoria em `order_status_logs`.
+   - Códigos de erro: `ORDER_NOT_FOUND`, `TERMINAL_STATE`.
 
 3. **`restock_product(p_product_id uuid, p_quantity numeric, p_reason text)`**:
    - Incrementa `current_stock` em `products` e insere `stock_movements` com `ENTRADA_MANUAL`.
+
+4. **`apply_order_triage(p_order_id uuid, p_items jsonb, p_deposit_notes text)`**:
+   - Aplica a triagem do depósito em uma única transação. Substituiu o `UPDATE` direto
+     que o cliente fazia em `order_items` — a triagem agora respeita o Guard Rail #7.
+   - `p_items` é um array de `{ item_id, approved_qty, reduction_reason }`.
+   - Trava o pedido e todos os insumos envolvidos com `SELECT ... FOR UPDATE`, em ordem
+     determinística de `product_id` para evitar deadlock entre operadores simultâneos.
+   - **Valida tudo antes de escrever qualquer coisa** (duas passadas), de modo que uma
+     rejeição nunca deixa o pedido parcialmente triado.
+   - Devolve ao `current_stock` a diferença reduzida e grava a movimentação correspondente;
+     ampliar a quantidade volta a debitar o saldo, exigindo disponibilidade.
+   - Exige `reduction_reason` sempre que `approved_qty < requested_qty`.
+   - Persiste `deposit_notes` (`NULL` preserva o valor atual, string vazia limpa o campo) e
+     registra a triagem em `order_status_logs`.
+   - Códigos de erro: `ORDER_NOT_FOUND`, `TERMINAL_STATE`, `ITEM_NOT_FOUND`,
+     `INVALID_QUANTITY`, `REASON_REQUIRED`, `INSUFFICIENT_STOCK`.
+   - Retorna `{ success, order_id, returned_to_stock }`, onde `returned_to_stock` é positivo
+     quando houve devolução ao estoque e negativo quando houve reserva adicional.
+
+5. **`create_or_update_product(p_id uuid, p_name text, p_category text, p_unit text, p_current_stock numeric, p_min_stock_alert numeric)`**:
+   - `p_id` nulo cria o insumo (gerando `ENTRADA_MANUAL` quando há saldo inicial);
+     `p_id` preenchido atualiza os dados cadastrais.
+   - A edição **não** altera `current_stock` — saldo só muda por `restock_product` ou por
+     movimentação de pedido.
+
+6. **`check_product_usage(p_product_id uuid)`**:
+   - Fonte de verdade server-side para a interface decidir entre desativar e remover.
+   - Retorna `{ open_order_count, total_item_count, can_hard_delete }`.
+
+7. **`deactivate_product(p_product_id uuid, p_force boolean)`**:
+   - Soft-delete: marca `is_active = false`, preservando todo o histórico.
+   - Sem `p_force`, retorna `CONFLICT_ORDERS` quando o insumo está em pedidos
+     `ABERTO`/`EM_ANALISE` — e nenhuma escrita acontece.
+   - Com `p_force`, para cada pedido afetado: estorna ao estoque o saldo retido, zera
+     `approved_qty` e grava em `reduction_reason` o motivo da inativação. Pedido que fica
+     sem nenhum item é cancelado automaticamente via `transition_order_status`.
+   - Retorna `{ affected_orders, returned_to_stock, cancelled_orders }`.
+
+8. **`reactivate_product(p_product_id uuid)`**:
+   - Devolve o insumo ao catálogo (`is_active = true`).
+
+9. **`delete_product(p_product_id uuid)`**:
+   - Remoção definitiva, permitida **somente** para insumo sem nenhum `order_items`.
+   - Com histórico, retorna `HAS_ORDER_HISTORY` com a contagem de itens, e a interface
+     oferece a desativação como alternativa.
+   - As `stock_movements` do insumo caem por `CASCADE` junto com a linha.

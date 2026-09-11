@@ -152,9 +152,59 @@ export interface ProductUpsertResponse {
 export interface DeactivateProductResponse {
   success: boolean;
   product_id?: string;
+  product_name?: string;
   forced?: boolean;
   affected_orders?: number;
   conflict_count?: number;
+  /** Saldo devolvido ao estoque ao zerar os itens dos pedidos em aberto. */
+  returned_to_stock?: number;
+  /** Pedidos cancelados automaticamente por terem ficado sem nenhum item. */
+  cancelled_orders?: number;
+  code?: string;
+  error?: string;
+}
+
+/** Ação destrutiva disponível no catálogo: ocultar ou remover definitivamente. */
+export type ProductActionMode = 'deactivate' | 'delete';
+
+export interface ProductUsageResponse {
+  success: boolean;
+  product_id?: string;
+  product_name?: string;
+  /** Pedidos ABERTO ou EM_ANALISE que contêm este insumo. */
+  open_order_count?: number;
+  /** Total de itens de pedido (qualquer status) que já referenciaram o insumo. */
+  total_item_count?: number;
+  /** Deleção definitiva só é possível quando o insumo nunca foi usado. */
+  can_hard_delete?: boolean;
+  code?: string;
+  error?: string;
+}
+
+export interface DeleteProductResponse {
+  success: boolean;
+  product_id?: string;
+  product_name?: string;
+  item_count?: number;
+  code?: string;
+  error?: string;
+}
+
+// ─── Triagem Atômica ─────────────────────────────────────────────────────────
+
+export interface ApplyTriageItemPayload {
+  item_id: string;
+  approved_qty: number;
+  reduction_reason?: string | null;
+}
+
+export interface ApplyTriageResponse {
+  success: boolean;
+  order_id?: string;
+  /** Positivo devolveu saldo ao estoque; negativo reservou saldo adicional. */
+  returned_to_stock?: number;
+  product_name?: string;
+  available_stock?: number;
   code?: string;
   error?: string;
 }

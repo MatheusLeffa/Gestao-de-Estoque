@@ -74,6 +74,11 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
   - Barra de busca instantânea por nome do insumo.
   - Filtros por categoria (*Hortifrúti, Carnes, Bebidas, etc.*) e filtro rápido `[⚠️ Apenas Estoque Baixo]`.
   - Modal rápido de entrada/reabastecimento manual de saldo no depósito.
+- **Gestão do Catálogo de Produtos (CRUD):**
+  - **Cadastro e edição:** o depósito cria novos insumos e configura nome, categoria, unidade, saldo inicial e ponto de reposição (`min_stock_alert`). A edição não altera saldo — saldo só muda por reabastecimento ou movimentação de pedido.
+  - **Desativação (soft-delete):** o insumo sai do catálogo visível ao restaurante, mas o histórico de pedidos permanece íntegro. Produtos inativos continuam consultáveis pelo depósito através do alternador `[👁️ Mostrar inativos]` e podem ser **reativados** a qualquer momento.
+  - **Deleção definitiva:** permitida **somente** para insumos que nunca apareceram em nenhum pedido. Havendo qualquer histórico, a deleção é bloqueada (`HAS_ORDER_HISTORY`) e a interface oferece a desativação como alternativa — preservando integralmente a rastreabilidade dos pedidos já realizados.
+  - **Ação forçada sobre pedidos em aberto:** se o insumo estiver em pedidos `ABERTO` ou `EM_ANALISE`, a desativação é barrada por padrão. O operador pode forçá-la mediante aviso explícito, e o sistema então: **(1)** estorna ao estoque o saldo reservado do item, **(2)** zera o item no pedido registrando como justificativa a inativação do catálogo, e **(3)** se o pedido ficar sem nenhum item, cancela-o automaticamente com o motivo devidamente registrado na auditoria.
 - **Painel de Pedidos Recebidos & Triagem:**
   - Recebimento de novos pedidos com **Efeito Sonoro (Áudio Chime suave opcional)** e alerta visual em tempo real via Supabase Realtime.
   - Ações de triagem & separação:
@@ -83,6 +88,7 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
     - Apontar atrasos (`EM_ATRASO`) com justificativas obrigatórias (*Falta de Produto* ou *Transporte Indisponível*).
     - Despachar para `EM_TRANSITO`.
     - Validar e liberar cancelamentos solicitados pelo restaurante com estorno atômico de estoque.
+    - **Cancelamento direto pelo depósito:** disponível nos status `ABERTO`, `EM_ANALISE` e `EM_ATRASO`, com justificativa obrigatória escolhida entre motivos fixos (*Insumos indisponíveis após confirmação, Erro operacional interno, Pedido duplicado, Problema de qualidade identificado na separação, Capacidade de entrega indisponível*) ou `Outro (descrever)` com campo livre. O estorno do saldo é atômico.
 
 ### 🍽️ B. Restaurante (Filial)
 - **Catálogo de Insumos & Checklist de Pedido:**
@@ -141,6 +147,28 @@ stateDiagram-v2
 - A função PostgreSQL `place_order_with_reservation()` no Supabase utiliza `SELECT ... FOR UPDATE` nas linhas dos produtos solicitados.
 - Se dois usuários submeterem um pedido simultaneamente disputando o último saldo, a primeira transação reserva o saldo; a segunda transação aborta com segurança e retorna erro amigável, disparando um ajuste visual no carrinho do segundo usuário.
 
+### ⚖️ Invariante do Ledger de Estoque (Regra Mestra de Saldo):
+
+A RPC `place_order_with_reservation()` **debita o saldo no ato da criação do pedido**. Disso decorre a regra mestra que rege toda a contabilidade de estoque do sistema:
+
+> **O saldo retido fora do `current_stock` por um item de pedido não-terminal é sempre o seu `approved_qty`.**
+
+Consequências obrigatórias e sem exceção:
+1. **Toda escrita em `approved_qty` move o `current_stock` na direção oposta**, dentro da mesma transação, com o respectivo registro em `stock_movements`. Se o depósito reduz um item de 10 kg para 4 kg na triagem, os 6 kg retornam imediatamente ao estoque e voltam a ficar disponíveis para outros pedidos.
+2. **O estorno de cancelamento usa `approved_qty`, jamais `requested_qty`** — caso contrário um pedido já triado devolveria saldo que não estava mais reservado, gerando crédito duplo.
+3. **Pedido em estado terminal não retém saldo algum.**
+
+Toda RPC que toque `approved_qty` deve ser validada contra a invariante, cujo total por produto é constante antes e depois da operação:
+
+```sql
+select p.id, p.current_stock + coalesce(sum(oi.approved_qty), 0) as total_invariante
+from products p
+left join order_items oi on oi.product_id = p.id
+left join orders o on o.id = oi.order_id
+  and o.status not in ('CONCLUIDO_TOTAL','CONCLUIDO_PARCIAL','CONCLUIDO_NAO_ENTREGUE','CANCELADO')
+group by p.id;
+```
+
 ### 📜 Auditoria de Mudança de Status (`order_status_logs`):
 - Toda alteração de status gera automaticamente um registro na tabela de logs contendo: `order_id`, `from_status`, `to_status`, `changed_by`, `reason` e `created_at`.
 
@@ -149,9 +177,10 @@ stateDiagram-v2
 ## 📐 5. Modelo de Dados Relacional (Supabase / PostgreSQL)
 
 - **`restaurants`**: `id (uuid PK)`, `name (text)`, `address (text)`, `is_active (boolean)`, `created_at (timestamp)`.
-- **`products`**: `id (uuid PK)`, `name (text)`, `category (text)`, `unit (text)`, `current_stock (numeric)`, `min_stock_alert (numeric)`, `created_at (timestamp)`.
-- **`orders`**: `id (uuid PK)`, `restaurant_id (uuid FK)`, `status (text)`, `delay_reason (text)`, `completion_type (text)`, `notes (text)`, `created_at (timestamp)`, `updated_at (timestamp)`.
-- **`order_items`**: `id (uuid PK)`, `order_id (uuid FK)`, `product_id (uuid FK)`, `requested_qty (numeric)`, `approved_qty (numeric)`, `delivered_qty (numeric)`.
+- **`products`**: `id (uuid PK)`, `name (text)`, `category (text)`, `unit (text)`, `current_stock (numeric)`, `min_stock_alert (numeric)`, `is_active (boolean)`, `created_at (timestamp)`.
+- **`orders`**: `id (uuid PK)`, `restaurant_id (uuid FK)`, `status (text)`, `delay_reason (text)`, `completion_type (text)`, `notes (text)`, `deposit_notes (text)`, `created_at (timestamp)`, `updated_at (timestamp)`.
+- **`order_items`**: `id (uuid PK)`, `order_id (uuid FK)`, `product_id (uuid FK)`, `requested_qty (numeric)`, `approved_qty (numeric)`, `delivered_qty (numeric)`, `reduction_reason (text)`.
+  - FK `product_id` com `ON DELETE RESTRICT` — o banco impede fisicamente a deleção de um insumo que já participou de qualquer pedido, garantindo a integridade do histórico.
 - **`order_status_logs`**: `id (uuid PK)`, `order_id (uuid FK)`, `from_status (text)`, `to_status (text)`, `reason (text)`, `created_at (timestamp)`.
 - **`stock_movements`**: `id (uuid PK)`, `product_id (uuid FK)`, `type (text)`, `quantity (numeric)`, `reason (text)`, `created_at (timestamp)`.
 
@@ -236,6 +265,11 @@ O **Tech Lead (Orquestrador Principal)** coordena e divide as demandas entre os 
   - Mini-dashboard de métricas no topo, efeito sonoro (áudio chime), busca e filtros de insumos (incluindo filtro de estoque baixo), modal de reabastecimento manual e painel de triagem/separação de pedidos.
   - *Agentes:* `ui-ux-designer` + `frontend-engineer` + `backend-workflow-engine`.
 
+- [x] **Fase 4.5: Gestão de Catálogo, Cancelamento pelo Depósito & Integridade do Ledger**
+  - Cancelamento direto pelo depósito com justificativa obrigatória, CRUD completo de produtos (cadastro, edição, desativação, reativação e deleção definitiva), ação forçada sobre pedidos em aberto com estorno e cancelamento automático de pedido esvaziado.
+  - Correção da contabilidade de estoque: triagem migrada para RPC atômica `apply_order_triage()` devolvendo ao saldo a diferença reduzida, e estorno de cancelamento corrigido para usar `approved_qty`.
+  - *Agentes:* `cloud-db-architect` + `backend-workflow-engine` + `frontend-engineer` + `ui-ux-designer` + `doc-specialist`.
+
 - [ ] **Fase 5: Módulo do Administrador (Analytics)**
   - Painel com visão unificada, cards de KPIs gerais, gráficos de motivos de atraso e indicadores de desfechos de entrega.
   - *Agentes:* `analytics-specialist` + `ui-ux-designer` + `frontend-engineer`.
@@ -247,6 +281,11 @@ O **Tech Lead (Orquestrador Principal)** coordena e divide as demandas entre os 
 ---
 
 ## 🔮 8. Backlog & Roadmap Futuro (Pós-MVP)
+
+### ⚠️ Questão de Negócio em Aberto (requer definição do Product Owner)
+- [ ] **Destino do saldo em pedidos concluídos com falta.** Hoje os desfechos `CONCLUIDO_PARCIAL` e `CONCLUIDO_NAO_ENTREGUE` **não devolvem ao estoque** a diferença entre `approved_qty` e `delivered_qty`. A decisão depende da semântica de cada caso: mercadoria **extraviada ou avariada** é perda real e não deve retornar ao saldo, enquanto mercadoria **recusada e devolvida fisicamente ao depósito** deveria retornar. Enquanto a regra não for definida, o comportamento atual é intencional e está documentado — nenhuma implementação deve ser feita por suposição.
+
+### 🚀 Evoluções Planejadas
 - [ ] **IA LLM para Análise e Insights:** Integração com Gemini API para gerar relatórios preditivos de consumo, previsão de reposição e detecção de gargalos para o Administrador.
 - [ ] **Notificações Externas:** Disparo automático de alertas via WhatsApp e E-mail.
 - [ ] **Gestão de Sobras Parciais:** Reprocessamento automático ou crédito de itens faltantes.
