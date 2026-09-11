@@ -13,11 +13,11 @@ import type {
 
 // ─── Transições de Status Permitidas (máquina de estados) ────────────────────
 const ALLOWED_TRANSITIONS: Partial<Record<OrderStatus, OrderStatus[]>> = {
-  ABERTO: ['EM_ANALISE', 'CANCELADO'],
-  EM_ANALISE: ['EM_TRANSITO', 'EM_ATRASO', 'CANCELAMENTO_PENDENTE'],
-  EM_ATRASO: ['EM_TRANSITO', 'CANCELAMENTO_PENDENTE'],
-  CANCELAMENTO_PENDENTE: ['CANCELADO'],
-  EM_TRANSITO: ['CONCLUIDO_TOTAL', 'CONCLUIDO_PARCIAL', 'CONCLUIDO_NAO_ENTREGUE'],
+  ABERTO:               ['EM_ANALISE', 'CANCELADO'],
+  EM_ANALISE:           ['EM_TRANSITO', 'EM_ATRASO', 'CANCELAMENTO_PENDENTE', 'CANCELADO'],
+  EM_ATRASO:            ['EM_TRANSITO', 'CANCELAMENTO_PENDENTE', 'CANCELADO', 'EM_ANALISE'],
+  CANCELAMENTO_PENDENTE:['CANCELADO'],
+  EM_TRANSITO:          ['CONCLUIDO_TOTAL', 'CONCLUIDO_PARCIAL', 'CONCLUIDO_NAO_ENTREGUE', 'EM_ATRASO', 'CANCELADO'],
 };
 
 /** Valida se a transição de status é permitida pela máquina de estados */
@@ -254,5 +254,29 @@ export async function approvePendingCancellation(orderId: string): Promise<Trans
     fromStatus: 'CANCELAMENTO_PENDENTE',
     toStatus: 'CANCELADO',
     reason: 'Cancelamento aprovado pelo operador do Depósito Central. Saldo estornado.',
+  });
+}
+
+// ─── Cancelamento de Pedido pelo Depósito ─────────────────────────────────────────────
+
+/**
+ * Cancela um pedido diretamente pelo depósito (ABERTO, EM_ANALISE ou EM_ATRASO → CANCELADO).
+ * O estorno de estoque é gerenciado atomicamente pela RPC transition_order_status.
+ */
+export async function cancelOrderByDepot(
+  orderId: string,
+  currentStatus: OrderStatus,
+  reason: string
+): Promise<TransitionStatusResult> {
+  const cancellableStatuses: OrderStatus[] = ['ABERTO', 'EM_ANALISE', 'EM_ATRASO'];
+  if (!cancellableStatuses.includes(currentStatus)) {
+    return { success: false, error: 'Este pedido não pode ser cancelado pelo depósito neste status.' };
+  }
+
+  return transitionOrderStatus({
+    orderId,
+    fromStatus: currentStatus,
+    toStatus: 'CANCELADO',
+    reason: `Cancelamento pelo depósito: ${reason}`,
   });
 }

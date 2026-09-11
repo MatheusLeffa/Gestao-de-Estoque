@@ -33,18 +33,27 @@ import { chimeService } from '@/lib/audio/chime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { OrderApprovalModal } from '@/components/estoque/OrderApprovalModal';
 import { RestockModal } from '@/components/estoque/RestockModal';
+import { CancelOrderModal } from '@/components/estoque/CancelOrderModal';
+import { ProductFormModal } from '@/components/estoque/ProductFormModal';
+import { ProductActionModal } from '@/components/estoque/ProductActionModal';
 import { OrderTimelineModal } from '@/components/restaurante/OrderTimelineModal';
+import { TransitActionModal } from '@/components/estoque/TransitActionModal';
 import {
   fetchAllOrders,
   transitionOrderStatus,
   updateApprovedItems,
   approvePendingCancellation,
+  cancelOrderByDepot,
 } from '@/lib/services/order-service';
 import {
   fetchProducts,
   restockProduct,
   extractCategories,
+  createOrUpdateProduct,
+  deactivateProduct,
+  reactivateProduct,
 } from '@/lib/services/inventory-service';
+import type { ProductUpsertPayload } from '@/types/database';
 
 type ActiveTab = 'pedidos' | 'catalogo';
 
@@ -75,6 +84,12 @@ export default function EstoquePage() {
   const [selectedOrderForApproval, setSelectedOrderForApproval] = useState<Order | null>(null);
   const [selectedOrderForTimeline, setSelectedOrderForTimeline] = useState<Order | null>(null);
   const [selectedProductForRestock, setSelectedProductForRestock] = useState<Product | null>(null);
+  const [selectedOrderForTransitAction, setSelectedOrderForTransitAction] = useState<Order | null>(null);
+  const [transitInitialAction, setTransitInitialAction] = useState<'delay' | 'cancel'>('delay');
+  const [selectedOrderForCancel, setSelectedOrderForCancel] = useState<Order | null>(null);
+  const [selectedProductForForm, setSelectedProductForForm] = useState<Product | null | 'new'>(null);
+  const [selectedProductForAction, setSelectedProductForAction] = useState<Product | null>(null);
+  const [productConflictCount, setProductConflictCount] = useState(0);
   const [isSubmittingAction, setIsSubmittingAction] = useState(false);
 
   // Toast banner em tempo real
@@ -306,6 +321,53 @@ export default function EstoquePage() {
     }
   };
 
+  // Tratar ocorrências de pedido em trânsito (Atraso ou Cancelamento)
+  const handleTransitActionConfirm = async (action: 'delay' | 'cancel', reason: string) => {
+    if (!selectedOrderForTransitAction) return;
+    setIsSubmittingAction(true);
+    try {
+      const orderId = selectedOrderForTransitAction.id;
+      const orderCode = orderId.slice(0, 8).toUpperCase();
+
+      if (action === 'delay') {
+        const res = await transitionOrderStatus({
+          orderId,
+          fromStatus: 'EM_TRANSITO',
+          toStatus: 'EM_ATRASO',
+          delayReason: reason,
+        });
+
+        if (!res.success) {
+          alert(res.error ?? 'Falha ao registrar atraso em trânsito.');
+          return;
+        }
+
+        if (soundEnabled) chimeService.playSuccessPing();
+        showToast(`⚠️ Atraso no trânsito registrado para pedido #${orderCode}!`);
+      } else {
+        const res = await transitionOrderStatus({
+          orderId,
+          fromStatus: 'EM_TRANSITO',
+          toStatus: 'CANCELADO',
+          reason: `Cancelamento em trânsito pelo depósito: ${reason}`,
+        });
+
+        if (!res.success) {
+          alert(res.error ?? 'Falha ao cancelar pedido em trânsito.');
+          return;
+        }
+
+        if (soundEnabled) chimeService.playSuccessPing();
+        showToast(`❌ Pedido #${orderCode} cancelado e estoque estornado!`);
+      }
+
+      setSelectedOrderForTransitAction(null);
+      await loadData(true);
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
+
   // Reabastecer insumo via RestockModal
   const handleRestockSubmit = async (productId: string, quantity: number, reason: string) => {
     setIsSubmittingAction(true);
@@ -318,6 +380,96 @@ export default function EstoquePage() {
         await loadData(true);
       } else {
         alert(res.error ?? 'Erro ao reabastecer insumo.');
+      }
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
+
+  // Cancelamento direto pelo depósito
+  const handleDepotCancelOrder = async (orderId: string, reason: string) => {
+    if (!selectedOrderForCancel) return;
+    setIsSubmittingAction(true);
+    try {
+      const res = await cancelOrderByDepot(orderId, selectedOrderForCancel.status, reason);
+      if (res.success) {
+        if (soundEnabled) chimeService.playSuccessPing();
+        showToast(`❌ Pedido #${orderId.slice(0, 8).toUpperCase()} cancelado pelo depósito.`);
+        setSelectedOrderForCancel(null);
+        await loadData(true);
+      } else {
+        alert(res.error ?? 'Falha ao cancelar pedido.');
+      }
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
+
+  // Salvar produto (criar ou editar)
+  const handleSaveProduct = async (payload: ProductUpsertPayload) => {
+    setIsSubmittingAction(true);
+    try {
+      const res = await createOrUpdateProduct(payload);
+      if (res.success) {
+        if (soundEnabled) chimeService.playSuccessPing();
+        const msg = payload.id ? `✅ Produto "${payload.name}" atualizado!` : `✅ Produto "${payload.name}" cadastrado!`;
+        showToast(msg);
+        setSelectedProductForForm(null);
+        await loadData(true);
+      } else {
+        alert(res.error ?? 'Erro ao salvar produto.');
+      }
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
+
+  // Abrir modal de desativação (pré-verificar conflitos)
+  const handleOpenDeactivate = async (product: Product) => {
+    // Conta pedidos ABERTO/EM_ANALISE com esse produto (client-side via orders já carregadas)
+    const count = orders.filter(
+      (o) =>
+        (o.status === 'ABERTO' || o.status === 'EM_ANALISE') &&
+        (o.order_items ?? []).some((item) => item.product_id === product.id)
+    ).length;
+    setProductConflictCount(count);
+    setSelectedProductForAction(product);
+  };
+
+  // Confirmar desativação
+  const handleDeactivateProduct = async (force: boolean) => {
+    if (!selectedProductForAction) return;
+    setIsSubmittingAction(true);
+    try {
+      const res = await deactivateProduct(selectedProductForAction.id, force);
+      if (res.success) {
+        if (soundEnabled) chimeService.playSuccessPing();
+        const affected = res.affected_orders ? ` (${res.affected_orders} pedido(s) afetado(s))` : '';
+        showToast(`🔕 "${selectedProductForAction.name}" desativado${affected}.`);
+        setSelectedProductForAction(null);
+        await loadData(true);
+      } else if (res.code === 'CONFLICT_ORDERS') {
+        // Isso não deveria acontecer pois a UI já mostra o checkbox, mas tratamos por segurança
+        alert(`Há ${res.conflict_count} pedido(s) em aberto com este produto. Use a opção de forçar desativação.`);
+      } else {
+        alert(res.error ?? 'Erro ao desativar produto.');
+      }
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
+
+  // Reativar produto
+  const handleReactivateProduct = async (product: Product) => {
+    setIsSubmittingAction(true);
+    try {
+      const res = await reactivateProduct(product.id);
+      if (res.success) {
+        if (soundEnabled) chimeService.playSuccessPing();
+        showToast(`✅ "${product.name}" reativado no catálogo!`);
+        await loadData(true);
+      } else {
+        alert(res.error ?? 'Erro ao reativar produto.');
       }
     } finally {
       setIsSubmittingAction(false);
@@ -751,18 +903,36 @@ export default function EstoquePage() {
 
                         {/* Ações contextuais de acordo com o status */}
                         {order.status === 'ABERTO' && (
-                          <button
-                            onClick={() => handleStartAnalysis(order)}
-                            disabled={isSubmittingAction}
-                            className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 flex items-center gap-1.5 shadow-xs transition-all active:scale-95 min-h-[44px]"
-                          >
-                            <Play className="w-3.5 h-3.5 fill-current" />
-                            <span>Iniciar Separação</span>
-                          </button>
+                          <>
+                            <button
+                              onClick={() => setSelectedOrderForCancel(order)}
+                              disabled={isSubmittingAction}
+                              className="px-3 py-2 rounded-xl text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 flex items-center gap-1.5 transition-all min-h-[44px]"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              <span>Cancelar</span>
+                            </button>
+                            <button
+                              onClick={() => handleStartAnalysis(order)}
+                              disabled={isSubmittingAction}
+                              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 flex items-center gap-1.5 shadow-xs transition-all active:scale-95 min-h-[44px]"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-current" />
+                              <span>Iniciar Separação</span>
+                            </button>
+                          </>
                         )}
 
                         {order.status === 'EM_ANALISE' && (
                           <>
+                            <button
+                              onClick={() => setSelectedOrderForCancel(order)}
+                              disabled={isSubmittingAction}
+                              className="px-3 py-2 rounded-xl text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 flex items-center gap-1.5 transition-all min-h-[44px]"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              <span>Cancelar</span>
+                            </button>
                             <button
                               onClick={() => setSelectedOrderForApproval(order)}
                               disabled={isSubmittingAction}
@@ -792,15 +962,52 @@ export default function EstoquePage() {
                           </>
                         )}
 
+                        {order.status === 'EM_TRANSITO' && (
+                          <>
+                            <button
+                              onClick={() => {
+                                setTransitInitialAction('delay');
+                                setSelectedOrderForTransitAction(order);
+                              }}
+                              disabled={isSubmittingAction}
+                              className="px-3.5 py-2 rounded-xl text-xs font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 flex items-center gap-1.5 transition-all min-h-[44px]"
+                            >
+                              <AlertTriangle className="w-3.5 h-3.5" />
+                              <span>Apontar Atraso</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setTransitInitialAction('cancel');
+                                setSelectedOrderForTransitAction(order);
+                              }}
+                              disabled={isSubmittingAction}
+                              className="px-3.5 py-2 rounded-xl text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 flex items-center gap-1.5 transition-all min-h-[44px]"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              <span>Cancelar Entrega</span>
+                            </button>
+                          </>
+                        )}
+
                         {order.status === 'EM_ATRASO' && (
-                          <button
-                            onClick={() => handleDispatchOrder(order)}
-                            disabled={isSubmittingAction}
-                            className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 flex items-center gap-1.5 shadow-xs transition-all active:scale-95 min-h-[44px]"
-                          >
-                            <Truck className="w-3.5 h-3.5" />
-                            <span>Resolver & Despachar</span>
-                          </button>
+                          <>
+                            <button
+                              onClick={() => setSelectedOrderForCancel(order)}
+                              disabled={isSubmittingAction}
+                              className="px-3 py-2 rounded-xl text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 flex items-center gap-1.5 transition-all min-h-[44px]"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              <span>Cancelar</span>
+                            </button>
+                            <button
+                              onClick={() => handleDispatchOrder(order)}
+                              disabled={isSubmittingAction}
+                              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 flex items-center gap-1.5 shadow-xs transition-all active:scale-95 min-h-[44px]"
+                            >
+                              <Truck className="w-3.5 h-3.5" />
+                              <span>Resolver &amp; Despachar</span>
+                            </button>
+                          </>
                         )}
 
                         {order.status === 'CANCELAMENTO_PENDENTE' && (
@@ -826,6 +1033,18 @@ export default function EstoquePage() {
       {/* ─── CONTEÚDO DA ABA 2: CATÁLOGO & REABASTECIMENTO ───────────────────── */}
       {activeTab === 'catalogo' && (
         <div className="space-y-4">
+          {/* Header do Catálogo + Botão Novo Produto */}
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-slate-500">Catálogo de insumos ativos</p>
+            <button
+              onClick={() => setSelectedProductForForm('new')}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-xs transition-all active:scale-95 min-h-[40px]"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Novo Produto</span>
+            </button>
+          </div>
+
           {/* Barra de Busca e Filtros */}
           <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
             <div className="flex flex-col sm:flex-row gap-2">
@@ -933,14 +1152,33 @@ export default function EstoquePage() {
                       </div>
                     </div>
 
-                    {/* Botão de Reabastecer */}
-                    <button
-                      onClick={() => setSelectedProductForRestock(p)}
-                      className="w-full py-2.5 px-3 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] min-h-[44px]"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Reabastecer Insumo</span>
-                    </button>
+                    {/* Botões de Ação do Produto */}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setSelectedProductForForm(p)}
+                        className="flex-1 py-2.5 px-2 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 flex items-center justify-center gap-1 transition-all active:scale-[0.98] min-h-[44px]"
+                        title="Editar produto"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span>Editar</span>
+                      </button>
+                      <button
+                        onClick={() => setSelectedProductForRestock(p)}
+                        className="flex-[2] py-2.5 px-3 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] min-h-[44px]"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Reabastecer</span>
+                      </button>
+                      <button
+                        onClick={() => handleOpenDeactivate(p)}
+                        disabled={isSubmittingAction}
+                        className="flex-1 py-2.5 px-2 rounded-xl text-xs font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 flex items-center justify-center gap-1 transition-all active:scale-[0.98] min-h-[44px] disabled:opacity-50"
+                        title="Desativar produto"
+                      >
+                        <EyeOff className="w-3.5 h-3.5" />
+                        <span>Desativar</span>
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -974,6 +1212,44 @@ export default function EstoquePage() {
         isOpen={!!selectedOrderForTimeline}
         order={selectedOrderForTimeline}
         onClose={() => setSelectedOrderForTimeline(null)}
+      />
+
+      {/* Modal de Ocorrências em Trânsito */}
+      <TransitActionModal
+        isOpen={!!selectedOrderForTransitAction}
+        order={selectedOrderForTransitAction}
+        initialAction={transitInitialAction}
+        onClose={() => setSelectedOrderForTransitAction(null)}
+        onConfirm={handleTransitActionConfirm}
+        isSubmitting={isSubmittingAction}
+      />
+
+      {/* Modal de Cancelamento pelo Depósito */}
+      <CancelOrderModal
+        isOpen={!!selectedOrderForCancel}
+        order={selectedOrderForCancel}
+        onClose={() => setSelectedOrderForCancel(null)}
+        onConfirm={handleDepotCancelOrder}
+        isSubmitting={isSubmittingAction}
+      />
+
+      {/* Modal de Formulário de Produto (Criar / Editar) */}
+      <ProductFormModal
+        isOpen={!!selectedProductForForm}
+        product={selectedProductForForm === 'new' ? null : selectedProductForForm}
+        onClose={() => setSelectedProductForForm(null)}
+        onSave={handleSaveProduct}
+        isSubmitting={isSubmittingAction}
+      />
+
+      {/* Modal de Desativação de Produto */}
+      <ProductActionModal
+        isOpen={!!selectedProductForAction}
+        product={selectedProductForAction}
+        conflictCount={productConflictCount}
+        onClose={() => setSelectedProductForAction(null)}
+        onConfirm={handleDeactivateProduct}
+        isSubmitting={isSubmittingAction}
       />
     </div>
   );

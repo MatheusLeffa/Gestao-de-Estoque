@@ -41,6 +41,7 @@ export interface Product {
   unit: string;
   current_stock: number;
   min_stock_alert: number;
+  is_active: boolean;
   created_at: string;
 }
 
@@ -129,3 +130,31 @@ export interface RestockProductResponse {
 }
 
 export type PersonaType = 'estoque' | 'restaurante' | 'admin';
+
+// ─── Product Management Payloads ─────────────────────────────────────────────
+
+export interface ProductUpsertPayload {
+  id?: string; // undefined = CREATE, string = UPDATE
+  name: string;
+  category: string;
+  unit: string;
+  current_stock: number;
+  min_stock_alert: number;
+}
+
+export interface ProductUpsertResponse {
+  success: boolean;
+  product_id?: string;
+  action?: 'created' | 'updated';
+  error?: string;
+}
+
+export interface DeactivateProductResponse {
+  success: boolean;
+  product_id?: string;
+  forced?: boolean;
+  affected_orders?: number;
+  conflict_count?: number;
+  code?: string;
+  error?: string;
+}
