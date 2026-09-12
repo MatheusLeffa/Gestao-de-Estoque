@@ -61,3 +61,38 @@ Este documento detalha a experiência de uso, layout Mobile-First, componentes t
   - `[🍽️ Restaurante]` ➔ Navega para `/restaurante`
   - `[👑 Administrador]` ➔ Navega para `/admin`
 - Salva a preferência no `localStorage` e no `DemoContext` para persistência entre recarregamentos.
+
+---
+
+## Ordenação de Listas (`SortControl`)
+
+Toda lista e tabela do sistema expõe ordenação por um parâmetro, com alternância entre
+crescente e decrescente, através do componente compartilhado
+[`src/components/ui/SortControl.tsx`](../src/components/ui/SortControl.tsx).
+
+**Anatomia:** um `select` nativo com o parâmetro, mais um botão que inverte a direção e
+mostra a seta correspondente. Ambos com `min-h-[44px]`, respeitando o alvo de toque.
+
+**Por que `select` nativo:** em mobile ele abre a roleta do próprio sistema operacional,
+mais confortável ao polegar que um dropdown customizado, e já vem acessível de fábrica
+(navegação por teclado, leitor de tela e rótulo associado). Um dropdown próprio custaria
+código e acessibilidade sem ganho real.
+
+**Posicionamento:** logo abaixo dos filtros existentes da lista, nunca acima deles. O
+usuário primeiro restringe o conjunto, depois ordena o que sobrou.
+
+**Regras de comparação** (em [`src/lib/utils/sorting.ts`](../src/lib/utils/sorting.ts)):
+- Valores ausentes vão sempre para o fim, em qualquer direção.
+- Texto compara com `localeCompare` em `pt-BR`, com `numeric: true`.
+- A função ordena uma cópia, jamais mutando a lista de origem.
+
+## Triagem do Depósito: Ponto de Entrada Único
+
+O botão `[Analisar Pedido]` é a única porta para a tela de triagem. As duas saídas
+possíveis — `Aprovar & Despachar` e `Registrar Atraso` — vivem dentro do modal, como um
+seletor de dois estados no topo.
+
+Anteriormente existiam dois botões externos, "Analisar / Despachar" e "Apontar Atraso",
+que chamavam exatamente a mesma função e abriam exatamente a mesma tela. Eram duplicatas
+visuais que sugeriam dois caminhos distintos onde só havia um, dividindo a atenção do
+operador no momento em que ele mais precisa de clareza.

@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import type { AdminAnalyticsResponse, Order } from '@/types/database';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { SortControl } from '@/components/ui/SortControl';
+import { sortItems, dateValue, type SortDirection } from '@/lib/utils/sorting';
 import { fetchAllOrders } from '@/lib/services/order-service';
 import {
   fetchAdminAnalytics,
@@ -33,12 +35,25 @@ import {
   OrdersTimelineChart,
 } from '@/components/admin/AnalyticsCharts';
 
+type AdminOrderSortKey = 'created_at' | 'updated_at' | 'status' | 'restaurant';
+
+const ADMIN_ORDER_SORT_OPTIONS: { value: AdminOrderSortKey; label: string }[] = [
+  { value: 'created_at', label: 'Data de criação' },
+  { value: 'updated_at', label: 'Última atualização' },
+  { value: 'status', label: 'Status' },
+  { value: 'restaurant', label: 'Restaurante' },
+];
+
 export default function AdminPage() {
   const [analytics, setAnalytics] = useState<AdminAnalyticsResponse | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Ordenação da tabela de pedidos
+  const [orderSort, setOrderSort] = useState<AdminOrderSortKey>('created_at');
+  const [orderSortDir, setOrderSortDir] = useState<SortDirection>('desc');
 
   const loadData = useCallback(async (isSilent = false) => {
     if (isSilent) setRefreshing(true);
@@ -69,6 +84,23 @@ export default function AdminPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const sortedOrders = sortItems(
+    orders,
+    (o) => {
+      switch (orderSort) {
+        case 'created_at':
+          return dateValue(o.created_at);
+        case 'updated_at':
+          return dateValue(o.updated_at);
+        case 'status':
+          return o.status;
+        case 'restaurant':
+          return o.restaurant?.name ?? null;
+      }
+    },
+    orderSortDir
+  );
 
   const kpis = analytics?.kpis;
   const onTimeLabel = formatOnTimeRate(kpis?.on_time_rate);
@@ -190,11 +222,23 @@ export default function AdminPage() {
 
       {/* Visão geral dos pedidos */}
       <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-subtle space-y-3">
-        <div>
-          <h2 className="text-sm font-bold text-slate-900">Visão Geral dos Pedidos da Rede</h2>
-          <p className="text-[11px] text-slate-500 mt-0.5">
-            {orders.length} pedido(s) mais recente(s)
-          </p>
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">Visão Geral dos Pedidos da Rede</h2>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {orders.length} pedido(s) mais recente(s)
+            </p>
+          </div>
+
+          <SortControl
+            options={ADMIN_ORDER_SORT_OPTIONS}
+            value={orderSort}
+            direction={orderSortDir}
+            onChange={setOrderSort}
+            onDirectionChange={setOrderSortDir}
+            label="Ordenar pedidos por"
+            className="w-full sm:w-auto sm:min-w-[280px]"
+          />
         </div>
 
         <div className="overflow-x-auto border border-slate-100 rounded-xl">
@@ -209,14 +253,14 @@ export default function AdminPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
-              {orders.length === 0 ? (
+              {sortedOrders.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="p-6 text-center text-slate-400">
                     Nenhum pedido registrado no sistema.
                   </td>
                 </tr>
               ) : (
-                orders.map((o) => (
+                sortedOrders.map((o) => (
                   <tr key={o.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="p-3 font-mono font-bold text-slate-900">
                       #{o.id.substring(0, 8).toUpperCase()}

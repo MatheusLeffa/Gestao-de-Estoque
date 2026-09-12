@@ -35,6 +35,8 @@ import {
 import { useDemo } from '@/contexts/DemoContext';
 import { chimeService } from '@/lib/audio/chime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { SortControl } from '@/components/ui/SortControl';
+import { sortItems, dateValue, type SortDirection } from '@/lib/utils/sorting';
 import { OrderApprovalModal } from '@/components/estoque/OrderApprovalModal';
 import { RestockModal } from '@/components/estoque/RestockModal';
 import { CancelOrderModal } from '@/components/estoque/CancelOrderModal';
@@ -63,6 +65,23 @@ import type { ProductUpsertPayload, ProductActionMode } from '@/types/database';
 
 type ActiveTab = 'pedidos' | 'catalogo';
 
+type OrderSortKey = 'created_at' | 'updated_at' | 'status' | 'items';
+type ProductSortKey = 'name' | 'stock' | 'category' | 'criticality';
+
+const ORDER_SORT_OPTIONS: { value: OrderSortKey; label: string }[] = [
+  { value: 'created_at', label: 'Data de criação' },
+  { value: 'updated_at', label: 'Última atualização' },
+  { value: 'status', label: 'Status' },
+  { value: 'items', label: 'Qtd. de insumos' },
+];
+
+const PRODUCT_SORT_OPTIONS: { value: ProductSortKey; label: string }[] = [
+  { value: 'name', label: 'Nome' },
+  { value: 'stock', label: 'Saldo em estoque' },
+  { value: 'category', label: 'Categoria' },
+  { value: 'criticality', label: 'Criticidade' },
+];
+
 export default function EstoquePage() {
   const { soundEnabled, setSoundEnabled } = useDemo();
   const toggleSound = () => setSoundEnabled(!soundEnabled);
@@ -85,6 +104,12 @@ export default function EstoquePage() {
   const [catalogSearch, setCatalogSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todos');
   const [onlyLowStock, setOnlyLowStock] = useState(false);
+
+  // Ordenação das listas
+  const [orderSort, setOrderSort] = useState<OrderSortKey>('created_at');
+  const [orderSortDir, setOrderSortDir] = useState<SortDirection>('desc');
+  const [productSort, setProductSort] = useState<ProductSortKey>('name');
+  const [productSortDir, setProductSortDir] = useState<SortDirection>('asc');
 
   // Modais
   const [selectedOrderForApproval, setSelectedOrderForApproval] = useState<Order | null>(null);
@@ -556,6 +581,23 @@ export default function EstoquePage() {
     return matchesStatus && matchesSearch;
   });
 
+  const sortedOrders = sortItems(
+    filteredOrders,
+    (o) => {
+      switch (orderSort) {
+        case 'created_at':
+          return dateValue(o.created_at);
+        case 'updated_at':
+          return dateValue(o.updated_at);
+        case 'status':
+          return o.status;
+        case 'items':
+          return (o.order_items ?? []).length;
+      }
+    },
+    orderSortDir
+  );
+
   // Filtragem de catálogo
   const filteredProducts = products.filter((p) => {
     const matchesSearch =
@@ -565,6 +607,25 @@ export default function EstoquePage() {
     const matchesLowStock = onlyLowStock ? p.current_stock <= p.min_stock_alert : true;
     return matchesSearch && matchesCategory && matchesLowStock;
   });
+
+  const sortedProducts = sortItems(
+    filteredProducts,
+    (p) => {
+      switch (productSort) {
+        case 'name':
+          return p.name;
+        case 'stock':
+          return p.current_stock;
+        case 'category':
+          return p.category;
+        // Distância até o ponto de reposição: crescente coloca o mais crítico
+        // (inclusive saldo negativo em relação ao alerta) no topo.
+        case 'criticality':
+          return p.current_stock - p.min_stock_alert;
+      }
+    },
+    productSortDir
+  );
 
   return (
     <div className="flex-1 p-3 sm:p-6 space-y-5 pb-28 max-w-6xl mx-auto w-full">
@@ -834,6 +895,17 @@ export default function EstoquePage() {
                 </button>
               ))}
             </div>
+
+            {/* Ordenação da lista de pedidos */}
+            <SortControl
+              options={ORDER_SORT_OPTIONS}
+              value={orderSort}
+              direction={orderSortDir}
+              onChange={setOrderSort}
+              onDirectionChange={setOrderSortDir}
+              label="Ordenar pedidos por"
+              className="max-w-sm"
+            />
           </div>
 
           {/* Lista de Pedidos */}
@@ -842,7 +914,7 @@ export default function EstoquePage() {
               <RefreshCw className="w-6 h-6 animate-spin mx-auto text-blue-600 mb-2" />
               Carregando pedidos do depósito...
             </div>
-          ) : filteredOrders.length === 0 ? (
+          ) : sortedOrders.length === 0 ? (
             <div className="p-12 text-center bg-white rounded-2xl border border-dashed border-slate-300">
               <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
               <p className="text-sm font-semibold text-slate-700">Nenhum pedido encontrado</p>
@@ -850,7 +922,7 @@ export default function EstoquePage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredOrders.map((order) => {
+              {sortedOrders.map((order) => {
                 const isExpanded = expandedOrderIds.has(order.id);
                 const items = order.order_items ?? [];
                 const totalUnits = items.reduce((acc, it) => acc + Number(it.requested_qty || 0), 0);
@@ -986,22 +1058,18 @@ export default function EstoquePage() {
                               <XCircle className="w-3.5 h-3.5" />
                               <span>Cancelar</span>
                             </button>
+                            {/* Botão único de triagem: o OrderApprovalModal já expõe
+                                internamente as duas saídas — "Aprovar & Despachar" e
+                                "Registrar Atraso" — então dois botões externos abrindo
+                                a mesma tela só dividiam a atenção do operador. */}
                             <button
                               onClick={() => setSelectedOrderForApproval(order)}
                               disabled={isSubmittingAction}
                               className="px-3.5 py-2 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 flex items-center gap-1.5 transition-all min-h-[44px]"
+                              title="Ajustar quantidades e então despachar ou registrar atraso"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
-                              <span>Analisar / Despachar</span>
-                            </button>
-
-                            <button
-                              onClick={() => setSelectedOrderForApproval(order)}
-                              disabled={isSubmittingAction}
-                              className="px-3 py-2 rounded-xl text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 flex items-center gap-1.5 transition-all min-h-[44px]"
-                            >
-                              <AlertTriangle className="w-3.5 h-3.5" />
-                              <span>Apontar Atraso</span>
+                              <span>Analisar Pedido</span>
                             </button>
 
                             <button
@@ -1154,6 +1222,17 @@ export default function EstoquePage() {
                 </button>
               ))}
             </div>
+
+            {/* Ordenação do catálogo */}
+            <SortControl
+              options={PRODUCT_SORT_OPTIONS}
+              value={productSort}
+              direction={productSortDir}
+              onChange={setProductSort}
+              onDirectionChange={setProductSortDir}
+              label="Ordenar insumos por"
+              className="max-w-sm"
+            />
           </div>
 
           {/* Grid de Insumos */}
@@ -1162,7 +1241,7 @@ export default function EstoquePage() {
               <RefreshCw className="w-6 h-6 animate-spin mx-auto text-blue-600 mb-2" />
               Carregando catálogo de insumos...
             </div>
-          ) : filteredProducts.length === 0 ? (
+          ) : sortedProducts.length === 0 ? (
             <div className="p-12 text-center bg-white rounded-2xl border border-dashed border-slate-300">
               <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
               <p className="text-sm font-semibold text-slate-700">Nenhum insumo encontrado</p>
@@ -1170,7 +1249,7 @@ export default function EstoquePage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {filteredProducts.map((p) => {
+              {sortedProducts.map((p) => {
                 const isCritical = p.current_stock <= p.min_stock_alert;
                 const ratio = Math.min(100, Math.round((p.current_stock / (p.min_stock_alert * 2)) * 100));
 

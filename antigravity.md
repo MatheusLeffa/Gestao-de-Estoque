@@ -85,6 +85,7 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
     - **Iniciar Separação com Análise Direta:** O botão único `[Iniciar Separação]` transiciona imediatamente o pedido para `EM_ANALISE` e abre a tela de análise e ajuste de insumos. Se o operador fechar ou cancelar a tela, o pedido permanece mantido em `EM_ANALISE`.
     - **Justificativa Individual de Redução Obrigatória:** Caso o depósito reduza a quantidade de qualquer item (`approved_qty < requested_qty`), é mandatória a justificativa individual do item (ex: avaria, estoque físico insuficiente, etc.), ficando bloqueado o despacho sem essa explicação.
     - **Observações Gerais do Depósito:** Campo opcional para recados ao motorista/restaurante (`deposit_notes`).
+    - **Ponto de Entrada Único da Triagem:** o botão `[Analisar Pedido]` é a única porta para a tela de triagem, e é lá dentro que o operador escolhe entre `Aprovar & Despachar` e `Registrar Atraso`. Não existem botões externos separados para essas duas saídas — eles abriam a mesma tela e apenas dividiam a atenção do operador.
     - Apontar atrasos (`EM_ATRASO`) com justificativa obrigatória, escolhida entre *Falta de Produto*, *Transporte Indisponível*, *Problema Logístico*, *Aguardando Reposição de Fornecedor* ou *Outro* com campo livre.
     - Despachar para `EM_TRANSITO`.
     - Validar e liberar cancelamentos solicitados pelo restaurante com estorno atômico de estoque.
@@ -119,7 +120,26 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
   - **Itens críticos.** Insumos ativos com `current_stock <= min_stock_alert`.
 - **Biblioteca de gráficos:** [Recharts](https://recharts.org) 3.x — escolhida por suportar oficialmente o React 19 e por resolver a responsividade de 360px através do `ResponsiveContainer`, exigido pelo guard rail Mobile-First.
 
-### 🎭 D. Modo Demonstração (Demo Switcher)
+### 🔀 D. Ordenação de Listas (Convenção Transversal)
+
+Toda lista ou tabela do sistema oferece ordenação por um parâmetro relevante ao seu conteúdo, com alternância entre crescente e decrescente. O controle é o componente compartilhado [`SortControl`](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/src/components/ui/SortControl.tsx): um `select` nativo com o parâmetro mais um botão que inverte a direção.
+
+O `select` nativo é uma escolha deliberada — em mobile ele abre a roleta do próprio sistema operacional, mais confortável ao polegar que qualquer dropdown customizado, e já vem acessível de fábrica.
+
+| Lista | Parâmetros disponíveis | Padrão |
+| :--- | :--- | :--- |
+| Pedidos do Depósito | Data de criação, Última atualização, Status, Qtd. de insumos | Data de criação, decrescente |
+| Catálogo do Depósito | Nome, Saldo em estoque, Categoria, Criticidade | Nome, crescente |
+| Catálogo do Restaurante | Nome, Saldo disponível, Categoria | Nome, crescente |
+| Pedidos do Restaurante | Data do pedido, Última atualização, Status | Data do pedido, decrescente |
+| Tabela do Administrador | Data de criação, Última atualização, Status, Restaurante | Data de criação, decrescente |
+
+- **Criticidade** ordena por `current_stock - min_stock_alert`, de modo que a direção crescente traz ao topo os insumos mais distantes, para baixo, do seu ponto de reposição.
+- **Valores ausentes vão sempre para o fim**, em qualquer direção: um item sem o dado não é o menor de todos, ele simplesmente não tem o dado.
+- A comparação de texto usa `localeCompare` em `pt-BR`, para que acentuação e maiúsculas não bagunçem a ordem alfabética.
+- No Restaurante, o mesmo critério governa os pedidos ativos e o histórico — são duas seções da mesma lista, e ordená-las de formas diferentes confundiria a leitura.
+
+### 🎭 E. Modo Demonstração (Demo Switcher)
 - Seletor fixo no topo da aplicação para alternância instantânea com 1 clique:
   `[📦 Modo Estoque]` | `[🍽️ Modo Restaurante]` | `[👑 Modo Administrador]`
 
