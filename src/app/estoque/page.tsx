@@ -44,6 +44,7 @@ import { ProductFormModal } from '@/components/estoque/ProductFormModal';
 import { ProductActionModal } from '@/components/estoque/ProductActionModal';
 import { OrderTimelineModal } from '@/components/restaurante/OrderTimelineModal';
 import { TransitActionModal } from '@/components/estoque/TransitActionModal';
+import { DispatchConfirmModal } from '@/components/estoque/DispatchConfirmModal';
 import {
   fetchAllOrders,
   transitionOrderStatus,
@@ -118,6 +119,7 @@ export default function EstoquePage() {
   const [selectedOrderForTransitAction, setSelectedOrderForTransitAction] = useState<Order | null>(null);
   const [transitInitialAction, setTransitInitialAction] = useState<'delay' | 'cancel'>('delay');
   const [selectedOrderForCancel, setSelectedOrderForCancel] = useState<Order | null>(null);
+  const [selectedOrderForDispatch, setSelectedOrderForDispatch] = useState<Order | null>(null);
   const [selectedProductForForm, setSelectedProductForForm] = useState<Product | null | 'new'>(null);
   const [selectedProductForAction, setSelectedProductForAction] = useState<Product | null>(null);
   const [productActionMode, setProductActionMode] = useState<ProductActionMode>('deactivate');
@@ -265,6 +267,7 @@ export default function EstoquePage() {
       if (res.success) {
         if (soundEnabled) chimeService.playSuccessPing();
         showToast(`🚚 Pedido #${order.id.slice(0, 8).toUpperCase()} despachado em trânsito!`);
+        setSelectedOrderForDispatch(null);
         await loadData(true);
       } else {
         alert(res.error ?? 'Falha ao despachar pedido.');
@@ -1073,7 +1076,7 @@ export default function EstoquePage() {
                             </button>
 
                             <button
-                              onClick={() => handleDispatchOrder(order)}
+                              onClick={() => setSelectedOrderForDispatch(order)}
                               disabled={isSubmittingAction}
                               className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 flex items-center gap-1.5 shadow-xs transition-all active:scale-95 min-h-[44px]"
                             >
@@ -1121,7 +1124,7 @@ export default function EstoquePage() {
                               <span>Cancelar</span>
                             </button>
                             <button
-                              onClick={() => handleDispatchOrder(order)}
+                              onClick={() => setSelectedOrderForDispatch(order)}
                               disabled={isSubmittingAction}
                               className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 flex items-center gap-1.5 shadow-xs transition-all active:scale-95 min-h-[44px]"
                             >
@@ -1414,6 +1417,15 @@ export default function EstoquePage() {
         product={selectedProductForForm === 'new' ? null : selectedProductForForm}
         onClose={() => setSelectedProductForForm(null)}
         onSave={handleSaveProduct}
+        isSubmitting={isSubmittingAction}
+      />
+
+      {/* Modal de Confirmação de Despacho */}
+      <DispatchConfirmModal
+        isOpen={!!selectedOrderForDispatch}
+        order={selectedOrderForDispatch}
+        onClose={() => setSelectedOrderForDispatch(null)}
+        onConfirm={handleDispatchOrder}
         isSubmitting={isSubmittingAction}
       />
 

@@ -96,3 +96,30 @@ Anteriormente existiam dois botões externos, "Analisar / Despachar" e "Apontar 
 que chamavam exatamente a mesma função e abriam exatamente a mesma tela. Eram duplicatas
 visuais que sugeriam dois caminhos distintos onde só havia um, dividindo a atenção do
 operador no momento em que ele mais precisa de clareza.
+
+## Confirmação de Despacho (`DispatchConfirmModal`)
+
+O botão de despacho do depósito — `[Despachar em Trânsito]` em `EM_ANALISE` e
+`[Resolver & Despachar]` em `EM_ATRASO` — não efetiva a transição direto. Ele abre
+[`DispatchConfirmModal`](../src/components/estoque/DispatchConfirmModal.tsx), uma
+conferência da carga.
+
+**Por que confirmar aqui:** o despacho é o ponto sem volta da triagem. A máquina de
+estados não permite `EM_TRANSITO → EM_ANALISE`, então as quantidades ficam congeladas.
+Depois de despachar, as únicas saídas são apontar atraso, cancelar a entrega ou concluir
+na conferência do restaurante.
+
+**O que a tela mostra**, para ser uma conferência de verdade e não um "tem certeza?":
+- Código do pedido, restaurante e resumo da carga (insumos e unidades totais).
+- Cada item com a quantidade que está efetivamente saindo.
+- Itens reduzidos destacados em âmbar, com a quantidade solicitada e a justificativa
+  registrada; itens zerados destacados em vermelho como "não será enviado".
+- As `deposit_notes`, quando houver, já que elas seguem para o restaurante.
+- Aviso explícito de que as quantidades ficam congeladas após a confirmação.
+
+O título se adapta à origem: "Confirmar Despacho" vindo de `EM_ANALISE`, "Resolver Atraso
+e Despachar" vindo de `EM_ATRASO`.
+
+O fluxo de aprovação dentro do `OrderApprovalModal` **não** ganha uma segunda confirmação:
+ali o operador já está olhando os itens e o botão final já se chama "Confirmar Despacho".
+Confirmar duas vezes seguidas treina o usuário a clicar sem ler.
