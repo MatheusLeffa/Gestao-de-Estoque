@@ -90,9 +90,12 @@ group by p.id;
 
 ### 3.2 Apontamento de Atrasos (`EM_ATRASO`)
 - Se houver impedimento na expedição, o status passa para `EM_ATRASO`.
-- **Justificativa Obrigatória:** O operador deve selecionar um motivo válido:
-  - `Falta de Produto` (insumo danificado no estoque ou avaria).
-  - `Transporte Indisponível` (falta de veículo ou problemas logísticos).
+- **Justificativa Obrigatória:** O operador deve selecionar um dos motivos oferecidos pelo `OrderApprovalModal`:
+  - `Falta de Produto` — insumo danificado no estoque ou avaria.
+  - `Transporte Indisponível` — falta de veículo.
+  - `Problema Logístico` — impedimento operacional na rota ou na expedição.
+  - `Aguardando Reposição de Fornecedor` — dependência externa de suprimento.
+  - `Outro` — exige descrição em campo livre, conforme a convenção do projeto.
 - O pedido pode retornar para `EM_ANALISE` ou ir direto para `EM_TRANSITO` assim que o problema for sanado.
 
 ---
@@ -121,3 +124,65 @@ Ao receber o pedido físico na cozinha, o restaurante finaliza o ciclo com um do
 1. `ENTREGUE_TOTAL`: Todos os itens foram recebidos conforme solicitado. O pedido passa para `CONCLUIDO_TOTAL`.
 2. `ENTREGUE_PARCIAL`: Houve faltas na entrega. O pedido passa para `CONCLUIDO_PARCIAL` e o restaurante deve informar a justificativa obrigatória.
 3. `NAO_ENTREGUE`: Pedido recusado, extraviado ou totalmente avariado. O pedido passa para `CONCLUIDO_NAO_ENTREGUE` com justificativa obrigatória.
+
+---
+
+## 6. Métricas e Indicadores do Painel do Administrador
+
+Todas as métricas são calculadas no PostgreSQL pela RPC `get_admin_analytics()`.
+As definições abaixo são normativas: a implementação segue este documento, e não o contrário.
+
+### 6.1 Taxa de Pontualidade
+
+**Base de cálculo:** pedidos que chegaram a um desfecho de entrega — `CONCLUIDO_TOTAL`,
+`CONCLUIDO_PARCIAL` ou `CONCLUIDO_NAO_ENTREGUE`.
+
+**Exclusões explícitas:**
+- Pedidos `CANCELADO` ficam **fora da base**. Um pedido cancelado nunca foi entregue, logo
+  não é nem pontual nem atrasado. Incluí-lo inflaria artificialmente o indicador.
+- Pedidos ainda em andamento (`ABERTO`, `EM_ANALISE`, `EM_ATRASO`, `EM_TRANSITO`,
+  `CANCELAMENTO_PENDENTE`) também ficam fora: o desfecho ainda não existe.
+
+**Critério de atraso:** o pedido é atrasado quando satisfaz **qualquer uma** destas condições:
+1. Passou por `EM_ATRASO` em algum momento do ciclo (`order_status_logs.to_status = 'EM_ATRASO'`).
+2. Tem `delay_reason` preenchido.
+
+O critério é histórico, não do status final — um pedido que atrasou e depois foi entregue
+continua contando como atrasado.
+
+A segunda condição não é redundante: o fluxo real sempre grava as duas coisas juntas, mas
+pedidos criados por seed ou por importação podem carregar o motivo sem a linha de log
+correspondente. Um `delay_reason` gravado já é evidência suficiente de atraso, e ignorá-lo
+faria o indicador reportar pontualidade perfeita para um pedido que exibe, na própria tela,
+o motivo pelo qual atrasou.
+
+**Fórmula:** `pontuais / base`, onde `pontuais = base - atrasados`.
+
+**Base vazia:** com zero pedidos concluídos, a métrica é **indefinida** e o painel exibe
+estado vazio. Exibir `100%` nesse caso seria enganoso.
+
+### 6.2 Motivos de Atraso
+Distribuição dos pedidos por `orders.delay_reason`, considerando apenas os registros com
+motivo preenchido. O gráfico agrupa por valor gravado, o que inclui tanto os motivos da
+lista fixa quanto os textos livres digitados em `Outro` — a lista completa está na seção 3.2.
+
+### 6.3 Desfechos de Entrega
+Contagem de pedidos por status terminal de entrega: `CONCLUIDO_TOTAL`, `CONCLUIDO_PARCIAL`
+e `CONCLUIDO_NAO_ENTREGUE`.
+
+### 6.4 Curva de Consumo de Insumos
+Soma de `COALESCE(delivered_qty, approved_qty, requested_qty)` por insumo, restrita aos
+itens de pedidos `CONCLUIDO_TOTAL` e `CONCLUIDO_PARCIAL`.
+
+O `COALESCE` reflete a realidade operacional: nem todo fluxo preenche `delivered_qty`, e
+nesse caso o melhor proxy do que chegou à cozinha é o que o depósito aprovou.
+`CONCLUIDO_NAO_ENTREGUE` **não** representa consumo e fica fora.
+
+### 6.5 Volume de Pedidos no Tempo
+Série diária dos últimos 14 dias, com duas contagens por dia: pedidos **criados**
+(`created_at`) e pedidos **concluídos** (`updated_at` de pedidos em status terminal de entrega).
+Dias sem movimento aparecem com zero, para que a série não distorça a leitura do intervalo.
+
+### 6.6 Itens Críticos
+Insumos com `is_active = true` e `current_stock <= min_stock_alert`.
+Insumos desativados não entram: não podem ser pedidos, logo não representam risco operacional.

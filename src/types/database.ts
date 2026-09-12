@@ -208,3 +208,54 @@ export interface ApplyTriageResponse {
   code?: string;
   error?: string;
 }
+
+// ─── Analytics do Administrador (RPC get_admin_analytics) ────────────────────
+
+export interface AdminKpis {
+  total_orders: number;
+  /** Base da pontualidade: pedidos que chegaram a um desfecho de entrega. */
+  delivered_base: number;
+  on_time_count: number;
+  delayed_count: number;
+  /** Percentual de 0 a 100. `null` quando `delivered_base` é zero — a métrica é
+   *  indefinida, e exibir 100% nesse caso seria enganoso. */
+  on_time_rate: number | null;
+  cancelled_count: number;
+  in_progress_count: number;
+  critical_items: number;
+  active_products: number;
+}
+
+export interface DelayReasonStat {
+  reason: string;
+  count: number;
+}
+
+export interface OutcomeStat {
+  status: 'CONCLUIDO_TOTAL' | 'CONCLUIDO_PARCIAL' | 'CONCLUIDO_NAO_ENTREGUE';
+  count: number;
+}
+
+export interface ConsumptionStat {
+  product_id: string;
+  name: string;
+  unit: string;
+  total: number;
+}
+
+export interface TimelinePoint {
+  /** Data no formato `YYYY-MM-DD`, no fuso America/Sao_Paulo. */
+  day: string;
+  created: number;
+  completed: number;
+}
+
+export interface AdminAnalyticsResponse {
+  success: boolean;
+  kpis?: AdminKpis;
+  delay_reasons?: DelayReasonStat[];
+  outcomes?: OutcomeStat[];
+  consumption?: ConsumptionStat[];
+  orders_timeline?: TimelinePoint[];
+  error?: string;
+}

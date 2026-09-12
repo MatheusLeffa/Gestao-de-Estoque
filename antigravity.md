@@ -85,7 +85,7 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
     - **Iniciar Separação com Análise Direta:** O botão único `[Iniciar Separação]` transiciona imediatamente o pedido para `EM_ANALISE` e abre a tela de análise e ajuste de insumos. Se o operador fechar ou cancelar a tela, o pedido permanece mantido em `EM_ANALISE`.
     - **Justificativa Individual de Redução Obrigatória:** Caso o depósito reduza a quantidade de qualquer item (`approved_qty < requested_qty`), é mandatória a justificativa individual do item (ex: avaria, estoque físico insuficiente, etc.), ficando bloqueado o despacho sem essa explicação.
     - **Observações Gerais do Depósito:** Campo opcional para recados ao motorista/restaurante (`deposit_notes`).
-    - Apontar atrasos (`EM_ATRASO`) com justificativas obrigatórias (*Falta de Produto* ou *Transporte Indisponível*).
+    - Apontar atrasos (`EM_ATRASO`) com justificativa obrigatória, escolhida entre *Falta de Produto*, *Transporte Indisponível*, *Problema Logístico*, *Aguardando Reposição de Fornecedor* ou *Outro* com campo livre.
     - Despachar para `EM_TRANSITO`.
     - Validar e liberar cancelamentos solicitados pelo restaurante com estorno atômico de estoque.
     - **Cancelamento direto pelo depósito:** disponível nos status `ABERTO`, `EM_ANALISE` e `EM_ATRASO`, com justificativa obrigatória escolhida entre motivos fixos (*Insumos indisponíveis após confirmação, Erro operacional interno, Pedido duplicado, Problema de qualidade identificado na separação, Capacidade de entrega indisponível*) ou `Outro (descrever)` com campo livre. O estorno do saldo é atômico.
@@ -109,11 +109,15 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
 
 ### 👑 C. Administrador (Gestão & Analytics)
 - **Acesso Unificado:** Visualização completa dos dados do Restaurante e do Estoque.
+- **Origem dos Dados:** todas as agregações são calculadas no PostgreSQL pela RPC `get_admin_analytics()`. O painel não varre pedidos em JavaScript — a tela apenas renderiza o que o banco já consolidou.
 - **Dashboard de Analytics:**
-  - Taxa de pontualidade (% de entregas no prazo vs atrasadas).
-  - Gráfico com motivos mais frequentes de atraso (*Transporte* vs *Falta de Insumo*).
-  - Proporção de desfechos de entrega (`Total` vs `Parcial` vs `Não Entregue`).
-  - Histórico geral e curva de consumo de insumos.
+  - **Taxa de pontualidade.** Percentual de pedidos entregues **no prazo** sobre o total de pedidos que chegaram a um desfecho de entrega. Um pedido é considerado atrasado se **em algum momento passou por `EM_ATRASO`**, conforme o histórico em `order_status_logs` — e não pelo status em que ele terminou. Pedidos `CANCELADO` e pedidos ainda em andamento **ficam fora da base de cálculo**: nunca foram entregues, logo não são nem pontuais nem atrasados. Sem nenhum pedido concluído, o painel exibe estado vazio honesto em vez de `100%`.
+  - **Motivos de atraso.** Distribuição dos pedidos por `delay_reason`, considerando apenas os que efetivamente registraram um motivo. O agrupamento é pelo valor gravado, abrangendo a lista fixa e os textos livres digitados em *Outro*.
+  - **Desfechos de entrega.** Proporção entre `CONCLUIDO_TOTAL`, `CONCLUIDO_PARCIAL` e `CONCLUIDO_NAO_ENTREGUE`.
+  - **Curva de consumo de insumos.** Ranking dos insumos mais consumidos, somando `COALESCE(delivered_qty, approved_qty, requested_qty)` dos itens de pedidos `CONCLUIDO_TOTAL` e `CONCLUIDO_PARCIAL`. Pedidos não entregues não representam consumo e ficam de fora.
+  - **Volume de pedidos no tempo.** Série diária dos últimos 14 dias, separando pedidos criados dos concluídos.
+  - **Itens críticos.** Insumos ativos com `current_stock <= min_stock_alert`.
+- **Biblioteca de gráficos:** [Recharts](https://recharts.org) 3.x — escolhida por suportar oficialmente o React 19 e por resolver a responsividade de 360px através do `ResponsiveContainer`, exigido pelo guard rail Mobile-First.
 
 ### 🎭 D. Modo Demonstração (Demo Switcher)
 - Seletor fixo no topo da aplicação para alternância instantânea com 1 clique:
@@ -270,9 +274,10 @@ O **Tech Lead (Orquestrador Principal)** coordena e divide as demandas entre os 
   - Correção da contabilidade de estoque: triagem migrada para RPC atômica `apply_order_triage()` devolvendo ao saldo a diferença reduzida, e estorno de cancelamento corrigido para usar `approved_qty`.
   - *Agentes:* `cloud-db-architect` + `backend-workflow-engine` + `frontend-engineer` + `ui-ux-designer` + `doc-specialist`.
 
-- [ ] **Fase 5: Módulo do Administrador (Analytics)**
-  - Painel com visão unificada, cards de KPIs gerais, gráficos de motivos de atraso e indicadores de desfechos de entrega.
-  - *Agentes:* `analytics-specialist` + `ui-ux-designer` + `frontend-engineer`.
+- [x] **Fase 5: Módulo do Administrador (Analytics)**
+  - Painel com visão unificada, cards de KPIs, gráfico de volume de pedidos no tempo, rosca de desfechos de entrega, barras de motivos de atraso e curva de consumo de insumos.
+  - Toda agregação consolidada no PostgreSQL pela RPC `get_admin_analytics()`, com as métricas definidas normativamente em `docs/business-rules.md` seção 6. Gráficos em Recharts 3.x com `ResponsiveContainer`, e estado vazio honesto em cada um deles.
+  - *Agentes:* `analytics-specialist` + `cloud-db-architect` + `ui-ux-designer` + `frontend-engineer` + `doc-specialist`.
 
 - [ ] **Fase 6: Testes de QA, Concorrência, Versionamento & Deploy na Vercel**
   - Testes de concorrência simultânea, validação em viewports mobile, esteira de verificação/build e checklist de deploy na Vercel.

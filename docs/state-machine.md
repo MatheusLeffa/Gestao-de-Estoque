@@ -54,7 +54,7 @@ stateDiagram-v2
 ## 3. Condições de Guarda & Auditoria
 
 1. **Campos Obrigatórios em Transições Críticas:**
-   - Para `EM_ATRASO`: O campo `delay_reason` deve conter *Falta de Produto* ou *Transporte Indisponível*.
+   - Para `EM_ATRASO`: o campo `delay_reason` é obrigatório e recebe um dos motivos da lista fixa do `OrderApprovalModal` (ver `business-rules.md` seção 3.2) ou o texto livre digitado em *Outro*.
    - Para `CONCLUIDO_PARCIAL` e `CONCLUIDO_NAO_ENTREGUE`: O campo `notes` ou `delay_reason` deve conter a justificativa do restaurante.
    - Para `CANCELADO` pelo depósito: justificativa obrigatória, escolhida entre motivos fixos ou `Outro (descrever)` com campo livre.
    - Para redução de item na triagem (`approved_qty < requested_qty`): `reduction_reason` individual obrigatória, **validada no banco** pela RPC `apply_order_triage` (`REASON_REQUIRED`).
