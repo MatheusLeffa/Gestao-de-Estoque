@@ -1,7 +1,9 @@
 -- ==============================================================================
 -- MIGRATION: product_management_v1
 -- InsumoSync — Gestão de Produtos (Cadastro, Edição, Desativação)
--- Execute este script no Supabase SQL Editor do projeto sqncxfboizrudyetetxi
+-- Aplicada via MCP do Supabase no projeto insumosync (ixjzheunfjwzqcncanvs).
+-- NOTA: deactivate_product foi substituida pela versao corrigida em
+-- 20260911_product_management_v2.sql, que estorna o saldo retido ao zerar itens.
 -- ==============================================================================
 
 -- 1. Adicionar coluna is_active em products

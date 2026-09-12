@@ -152,9 +152,110 @@ export interface ProductUpsertResponse {
 export interface DeactivateProductResponse {
   success: boolean;
   product_id?: string;
+  product_name?: string;
   forced?: boolean;
   affected_orders?: number;
   conflict_count?: number;
+  /** Saldo devolvido ao estoque ao zerar os itens dos pedidos em aberto. */
+  returned_to_stock?: number;
+  /** Pedidos cancelados automaticamente por terem ficado sem nenhum item. */
+  cancelled_orders?: number;
   code?: string;
+  error?: string;
+}
+
+/** Ação destrutiva disponível no catálogo: ocultar ou remover definitivamente. */
+export type ProductActionMode = 'deactivate' | 'delete';
+
+export interface ProductUsageResponse {
+  success: boolean;
+  product_id?: string;
+  product_name?: string;
+  /** Pedidos ABERTO ou EM_ANALISE que contêm este insumo. */
+  open_order_count?: number;
+  /** Total de itens de pedido (qualquer status) que já referenciaram o insumo. */
+  total_item_count?: number;
+  /** Deleção definitiva só é possível quando o insumo nunca foi usado. */
+  can_hard_delete?: boolean;
+  code?: string;
+  error?: string;
+}
+
+export interface DeleteProductResponse {
+  success: boolean;
+  product_id?: string;
+  product_name?: string;
+  item_count?: number;
+  code?: string;
+  error?: string;
+}
+
+// ─── Triagem Atômica ─────────────────────────────────────────────────────────
+
+export interface ApplyTriageItemPayload {
+  item_id: string;
+  approved_qty: number;
+  reduction_reason?: string | null;
+}
+
+export interface ApplyTriageResponse {
+  success: boolean;
+  order_id?: string;
+  /** Positivo devolveu saldo ao estoque; negativo reservou saldo adicional. */
+  returned_to_stock?: number;
+  product_name?: string;
+  available_stock?: number;
+  code?: string;
+  error?: string;
+}
+
+// ─── Analytics do Administrador (RPC get_admin_analytics) ────────────────────
+
+export interface AdminKpis {
+  total_orders: number;
+  /** Base da pontualidade: pedidos que chegaram a um desfecho de entrega. */
+  delivered_base: number;
+  on_time_count: number;
+  delayed_count: number;
+  /** Percentual de 0 a 100. `null` quando `delivered_base` é zero — a métrica é
+   *  indefinida, e exibir 100% nesse caso seria enganoso. */
+  on_time_rate: number | null;
+  cancelled_count: number;
+  in_progress_count: number;
+  critical_items: number;
+  active_products: number;
+}
+
+export interface DelayReasonStat {
+  reason: string;
+  count: number;
+}
+
+export interface OutcomeStat {
+  status: 'CONCLUIDO_TOTAL' | 'CONCLUIDO_PARCIAL' | 'CONCLUIDO_NAO_ENTREGUE';
+  count: number;
+}
+
+export interface ConsumptionStat {
+  product_id: string;
+  name: string;
+  unit: string;
+  total: number;
+}
+
+export interface TimelinePoint {
+  /** Data no formato `YYYY-MM-DD`, no fuso America/Sao_Paulo. */
+  day: string;
+  created: number;
+  completed: number;
+}
+
+export interface AdminAnalyticsResponse {
+  success: boolean;
+  kpis?: AdminKpis;
+  delay_reasons?: DelayReasonStat[];
+  outcomes?: OutcomeStat[];
+  consumption?: ConsumptionStat[];
+  orders_timeline?: TimelinePoint[];
   error?: string;
 }

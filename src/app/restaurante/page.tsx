@@ -28,6 +28,8 @@ import { CheckInDeliveryModal } from '@/components/restaurante/CheckInDeliveryMo
 import { StatusBadge } from '@/components/ui/StatusBadge';
 
 import type { Product, Order, CompletionType } from '@/types/database';
+import { SortControl } from '@/components/ui/SortControl';
+import { sortItems, dateValue, type SortDirection } from '@/lib/utils/sorting';
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 
@@ -49,6 +51,21 @@ function formatRelative(iso: string) {
 
 // ─── Componente Principal ─────────────────────────────────────────────────────
 
+type RestProductSortKey = 'name' | 'stock' | 'category';
+type RestOrderSortKey = 'created_at' | 'updated_at' | 'status';
+
+const REST_PRODUCT_SORT_OPTIONS: { value: RestProductSortKey; label: string }[] = [
+  { value: 'name', label: 'Nome' },
+  { value: 'stock', label: 'Saldo disponível' },
+  { value: 'category', label: 'Categoria' },
+];
+
+const REST_ORDER_SORT_OPTIONS: { value: RestOrderSortKey; label: string }[] = [
+  { value: 'created_at', label: 'Data do pedido' },
+  { value: 'updated_at', label: 'Última atualização' },
+  { value: 'status', label: 'Status' },
+];
+
 export default function RestaurantePage() {
   const { activeRestaurant, soundEnabled } = useDemo();
   const restaurantId = activeRestaurant?.id ?? DEMO_RESTAURANT_ID;
@@ -61,6 +78,12 @@ export default function RestaurantePage() {
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('Todos');
+
+  // Ordenação das listas
+  const [productSort, setProductSort] = useState<RestProductSortKey>('name');
+  const [productSortDir, setProductSortDir] = useState<SortDirection>('asc');
+  const [orderSort, setOrderSort] = useState<RestOrderSortKey>('created_at');
+  const [orderSortDir, setOrderSortDir] = useState<SortDirection>('desc');
 
   // ── Cart state ──
   const [cart, setCart] = useState<Record<string, number>>({});
@@ -240,11 +263,47 @@ export default function RestaurantePage() {
   const categories = extractCategories(products);
   const filteredProducts = filterProducts(products, search, activeCategory);
 
-  const activeOrders = orders.filter((o) =>
-    ['ABERTO', 'EM_ANALISE', 'EM_ATRASO', 'CANCELAMENTO_PENDENTE', 'EM_TRANSITO'].includes(o.status)
+  const sortedProducts = sortItems(
+    filteredProducts,
+    (p) => {
+      switch (productSort) {
+        case 'name':
+          return p.name;
+        case 'stock':
+          return p.current_stock;
+        case 'category':
+          return p.category;
+      }
+    },
+    productSortDir
   );
-  const pastOrders = orders.filter((o) =>
-    ['CONCLUIDO_TOTAL', 'CONCLUIDO_PARCIAL', 'CONCLUIDO_NAO_ENTREGUE', 'CANCELADO'].includes(o.status)
+
+  // O mesmo critério vale para os pedidos ativos e para o histórico: são duas
+  // seções da mesma lista, e ordená-las de formas diferentes confundiria a leitura.
+  const orderAccessor = (o: Order) => {
+    switch (orderSort) {
+      case 'created_at':
+        return dateValue(o.created_at);
+      case 'updated_at':
+        return dateValue(o.updated_at);
+      case 'status':
+        return o.status;
+    }
+  };
+
+  const activeOrders = sortItems(
+    orders.filter((o) =>
+      ['ABERTO', 'EM_ANALISE', 'EM_ATRASO', 'CANCELAMENTO_PENDENTE', 'EM_TRANSITO'].includes(o.status)
+    ),
+    orderAccessor,
+    orderSortDir
+  );
+  const pastOrders = sortItems(
+    orders.filter((o) =>
+      ['CONCLUIDO_TOTAL', 'CONCLUIDO_PARCIAL', 'CONCLUIDO_NAO_ENTREGUE', 'CANCELADO'].includes(o.status)
+    ),
+    orderAccessor,
+    orderSortDir
   );
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -350,6 +409,17 @@ export default function RestaurantePage() {
                   </button>
                 ))}
               </div>
+
+              {/* Ordenação do catálogo */}
+              <SortControl
+                options={REST_PRODUCT_SORT_OPTIONS}
+                value={productSort}
+                direction={productSortDir}
+                onChange={setProductSort}
+                onDirectionChange={setProductSortDir}
+                label="Ordenar insumos por"
+                className="max-w-sm"
+              />
             </div>
 
             {/* Product Cards */}
@@ -359,14 +429,14 @@ export default function RestaurantePage() {
                   <div key={i} className="h-36 rounded-2xl bg-slate-100 animate-pulse" />
                 ))}
               </div>
-            ) : filteredProducts.length === 0 ? (
+            ) : sortedProducts.length === 0 ? (
               <div className="text-center py-16 text-slate-400">
                 <ShoppingBag className="w-10 h-10 mx-auto mb-3 opacity-40" />
                 <p className="text-sm">Nenhum insumo encontrado.</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                {filteredProducts.map((p) => {
+                {sortedProducts.map((p) => {
                   const inCart = cart[p.id] ?? 0;
                   const isOutOfStock = p.current_stock <= 0;
                   const isLowStock = p.current_stock > 0 && p.current_stock <= p.min_stock_alert;
@@ -449,6 +519,17 @@ export default function RestaurantePage() {
                 <RefreshCw className={`w-4 h-4 ${loadingOrders ? 'animate-spin' : ''}`} />
               </button>
             </div>
+
+            {/* Ordenação aplicada tanto aos pedidos ativos quanto ao histórico */}
+            <SortControl
+              options={REST_ORDER_SORT_OPTIONS}
+              value={orderSort}
+              direction={orderSortDir}
+              onChange={setOrderSort}
+              onDirectionChange={setOrderSortDir}
+              label="Ordenar pedidos por"
+              className="max-w-sm"
+            />
 
             {loadingOrders ? (
               <div className="space-y-3">

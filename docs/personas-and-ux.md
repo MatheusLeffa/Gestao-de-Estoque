@@ -61,3 +61,65 @@ Este documento detalha a experiência de uso, layout Mobile-First, componentes t
   - `[🍽️ Restaurante]` ➔ Navega para `/restaurante`
   - `[👑 Administrador]` ➔ Navega para `/admin`
 - Salva a preferência no `localStorage` e no `DemoContext` para persistência entre recarregamentos.
+
+---
+
+## Ordenação de Listas (`SortControl`)
+
+Toda lista e tabela do sistema expõe ordenação por um parâmetro, com alternância entre
+crescente e decrescente, através do componente compartilhado
+[`src/components/ui/SortControl.tsx`](../src/components/ui/SortControl.tsx).
+
+**Anatomia:** um `select` nativo com o parâmetro, mais um botão que inverte a direção e
+mostra a seta correspondente. Ambos com `min-h-[44px]`, respeitando o alvo de toque.
+
+**Por que `select` nativo:** em mobile ele abre a roleta do próprio sistema operacional,
+mais confortável ao polegar que um dropdown customizado, e já vem acessível de fábrica
+(navegação por teclado, leitor de tela e rótulo associado). Um dropdown próprio custaria
+código e acessibilidade sem ganho real.
+
+**Posicionamento:** logo abaixo dos filtros existentes da lista, nunca acima deles. O
+usuário primeiro restringe o conjunto, depois ordena o que sobrou.
+
+**Regras de comparação** (em [`src/lib/utils/sorting.ts`](../src/lib/utils/sorting.ts)):
+- Valores ausentes vão sempre para o fim, em qualquer direção.
+- Texto compara com `localeCompare` em `pt-BR`, com `numeric: true`.
+- A função ordena uma cópia, jamais mutando a lista de origem.
+
+## Triagem do Depósito: Ponto de Entrada Único
+
+O botão `[Analisar Pedido]` é a única porta para a tela de triagem. As duas saídas
+possíveis — `Aprovar & Despachar` e `Registrar Atraso` — vivem dentro do modal, como um
+seletor de dois estados no topo.
+
+Anteriormente existiam dois botões externos, "Analisar / Despachar" e "Apontar Atraso",
+que chamavam exatamente a mesma função e abriam exatamente a mesma tela. Eram duplicatas
+visuais que sugeriam dois caminhos distintos onde só havia um, dividindo a atenção do
+operador no momento em que ele mais precisa de clareza.
+
+## Confirmação de Despacho (`DispatchConfirmModal`)
+
+O botão de despacho do depósito — `[Despachar em Trânsito]` em `EM_ANALISE` e
+`[Resolver & Despachar]` em `EM_ATRASO` — não efetiva a transição direto. Ele abre
+[`DispatchConfirmModal`](../src/components/estoque/DispatchConfirmModal.tsx), uma
+conferência da carga.
+
+**Por que confirmar aqui:** o despacho é o ponto sem volta da triagem. A máquina de
+estados não permite `EM_TRANSITO → EM_ANALISE`, então as quantidades ficam congeladas.
+Depois de despachar, as únicas saídas são apontar atraso, cancelar a entrega ou concluir
+na conferência do restaurante.
+
+**O que a tela mostra**, para ser uma conferência de verdade e não um "tem certeza?":
+- Código do pedido, restaurante e resumo da carga (insumos e unidades totais).
+- Cada item com a quantidade que está efetivamente saindo.
+- Itens reduzidos destacados em âmbar, com a quantidade solicitada e a justificativa
+  registrada; itens zerados destacados em vermelho como "não será enviado".
+- As `deposit_notes`, quando houver, já que elas seguem para o restaurante.
+- Aviso explícito de que as quantidades ficam congeladas após a confirmação.
+
+O título se adapta à origem: "Confirmar Despacho" vindo de `EM_ANALISE`, "Resolver Atraso
+e Despachar" vindo de `EM_ATRASO`.
+
+O fluxo de aprovação dentro do `OrderApprovalModal` **não** ganha uma segunda confirmação:
+ali o operador já está olhando os itens e o botão final já se chama "Confirmar Despacho".
+Confirmar duas vezes seguidas treina o usuário a clicar sem ler.

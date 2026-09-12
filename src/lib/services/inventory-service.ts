@@ -8,6 +8,8 @@ import type {
   ProductUpsertPayload,
   ProductUpsertResponse,
   DeactivateProductResponse,
+  ProductUsageResponse,
+  DeleteProductResponse,
 } from '@/types/database';
 
 // ─── Catálogo de Produtos ─────────────────────────────────────────────────────
@@ -155,6 +157,48 @@ export async function reactivateProduct(
   }
 
   return data as { success: boolean; error?: string };
+}
+
+// ─── Uso do Produto (fonte de verdade server-side para a UI) ─────────────────
+
+/**
+ * Consulta no banco quantos pedidos em aberto e quantos itens históricos
+ * referenciam o insumo. A UI usa isso para decidir entre desativar e deletar,
+ * em vez de contar sobre a lista de pedidos carregada na tela (que é paginada).
+ */
+export async function checkProductUsage(
+  productId: string
+): Promise<ProductUsageResponse> {
+  const { data, error } = await supabase.rpc('check_product_usage', {
+    p_product_id: productId,
+  });
+
+  if (error) {
+    return { success: false, error: `Erro ao verificar uso do produto: ${error.message}` };
+  }
+
+  return data as ProductUsageResponse;
+}
+
+// ─── Deletar Produto (remoção definitiva) ────────────────────────────────────
+
+/**
+ * Remove o insumo em definitivo. Só é permitido quando ele nunca apareceu em
+ * nenhum pedido — caso contrário a RPC devolve `HAS_ORDER_HISTORY` e a interface
+ * oferece a desativação, preservando o histórico.
+ */
+export async function deleteProduct(
+  productId: string
+): Promise<DeleteProductResponse> {
+  const { data, error } = await supabase.rpc('delete_product', {
+    p_product_id: productId,
+  });
+
+  if (error) {
+    return { success: false, error: `Erro ao remover produto: ${error.message}` };
+  }
+
+  return data as DeleteProductResponse;
 }
 
 // ─── Categorias únicas do catálogo ───────────────────────────────────────────

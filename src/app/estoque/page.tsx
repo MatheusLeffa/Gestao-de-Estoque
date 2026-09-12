@@ -27,10 +27,16 @@ import {
   AlertOctagon,
   XCircle,
   Edit3,
+  EyeOff,
+  Eye,
+  Trash2,
+  RotateCcw,
 } from 'lucide-react';
 import { useDemo } from '@/contexts/DemoContext';
 import { chimeService } from '@/lib/audio/chime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { SortControl } from '@/components/ui/SortControl';
+import { sortItems, dateValue, type SortDirection } from '@/lib/utils/sorting';
 import { OrderApprovalModal } from '@/components/estoque/OrderApprovalModal';
 import { RestockModal } from '@/components/estoque/RestockModal';
 import { CancelOrderModal } from '@/components/estoque/CancelOrderModal';
@@ -38,6 +44,7 @@ import { ProductFormModal } from '@/components/estoque/ProductFormModal';
 import { ProductActionModal } from '@/components/estoque/ProductActionModal';
 import { OrderTimelineModal } from '@/components/restaurante/OrderTimelineModal';
 import { TransitActionModal } from '@/components/estoque/TransitActionModal';
+import { DispatchConfirmModal } from '@/components/estoque/DispatchConfirmModal';
 import {
   fetchAllOrders,
   transitionOrderStatus,
@@ -52,10 +59,29 @@ import {
   createOrUpdateProduct,
   deactivateProduct,
   reactivateProduct,
+  checkProductUsage,
+  deleteProduct,
 } from '@/lib/services/inventory-service';
-import type { ProductUpsertPayload } from '@/types/database';
+import type { ProductUpsertPayload, ProductActionMode } from '@/types/database';
 
 type ActiveTab = 'pedidos' | 'catalogo';
+
+type OrderSortKey = 'created_at' | 'updated_at' | 'status' | 'items';
+type ProductSortKey = 'name' | 'stock' | 'category' | 'criticality';
+
+const ORDER_SORT_OPTIONS: { value: OrderSortKey; label: string }[] = [
+  { value: 'created_at', label: 'Data de criação' },
+  { value: 'updated_at', label: 'Última atualização' },
+  { value: 'status', label: 'Status' },
+  { value: 'items', label: 'Qtd. de insumos' },
+];
+
+const PRODUCT_SORT_OPTIONS: { value: ProductSortKey; label: string }[] = [
+  { value: 'name', label: 'Nome' },
+  { value: 'stock', label: 'Saldo em estoque' },
+  { value: 'category', label: 'Categoria' },
+  { value: 'criticality', label: 'Criticidade' },
+];
 
 export default function EstoquePage() {
   const { soundEnabled, setSoundEnabled } = useDemo();
@@ -80,6 +106,12 @@ export default function EstoquePage() {
   const [selectedCategory, setSelectedCategory] = useState('Todos');
   const [onlyLowStock, setOnlyLowStock] = useState(false);
 
+  // Ordenação das listas
+  const [orderSort, setOrderSort] = useState<OrderSortKey>('created_at');
+  const [orderSortDir, setOrderSortDir] = useState<SortDirection>('desc');
+  const [productSort, setProductSort] = useState<ProductSortKey>('name');
+  const [productSortDir, setProductSortDir] = useState<SortDirection>('asc');
+
   // Modais
   const [selectedOrderForApproval, setSelectedOrderForApproval] = useState<Order | null>(null);
   const [selectedOrderForTimeline, setSelectedOrderForTimeline] = useState<Order | null>(null);
@@ -87,9 +119,15 @@ export default function EstoquePage() {
   const [selectedOrderForTransitAction, setSelectedOrderForTransitAction] = useState<Order | null>(null);
   const [transitInitialAction, setTransitInitialAction] = useState<'delay' | 'cancel'>('delay');
   const [selectedOrderForCancel, setSelectedOrderForCancel] = useState<Order | null>(null);
+  const [selectedOrderForDispatch, setSelectedOrderForDispatch] = useState<Order | null>(null);
   const [selectedProductForForm, setSelectedProductForForm] = useState<Product | null | 'new'>(null);
   const [selectedProductForAction, setSelectedProductForAction] = useState<Product | null>(null);
+  const [productActionMode, setProductActionMode] = useState<ProductActionMode>('deactivate');
   const [productConflictCount, setProductConflictCount] = useState(0);
+  const [productHistoryCount, setProductHistoryCount] = useState(0);
+  const [isLoadingUsage, setIsLoadingUsage] = useState(false);
+  // Exibe também os insumos desativados, permitindo reativá-los
+  const [showInactive, setShowInactive] = useState(false);
   const [isSubmittingAction, setIsSubmittingAction] = useState(false);
 
   // Toast banner em tempo real
@@ -112,7 +150,7 @@ export default function EstoquePage() {
 
     try {
       const [productsData, ordersData] = await Promise.all([
-        fetchProducts(),
+        fetchProducts(showInactive),
         fetchAllOrders(60),
       ]);
       setProducts(productsData);
@@ -123,7 +161,7 @@ export default function EstoquePage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [showInactive]);
 
   useEffect(() => {
     loadData();
@@ -229,6 +267,7 @@ export default function EstoquePage() {
       if (res.success) {
         if (soundEnabled) chimeService.playSuccessPing();
         showToast(`🚚 Pedido #${order.id.slice(0, 8).toUpperCase()} despachado em trânsito!`);
+        setSelectedOrderForDispatch(null);
         await loadData(true);
       } else {
         alert(res.error ?? 'Falha ao despachar pedido.');
@@ -294,9 +333,11 @@ export default function EstoquePage() {
       }
 
       setSelectedOrderForApproval(null);
-      await loadData(true);
     } finally {
       setIsSubmittingAction(false);
+      // A triagem é commitada antes do despacho. Se o despacho falhar, o saldo já
+      // mudou no banco — por isso a tela é recarregada em qualquer desfecho.
+      await loadData(true);
     }
   };
 
@@ -424,33 +465,73 @@ export default function EstoquePage() {
     }
   };
 
-  // Abrir modal de desativação (pré-verificar conflitos)
-  const handleOpenDeactivate = async (product: Product) => {
-    // Conta pedidos ABERTO/EM_ANALISE com esse produto (client-side via orders já carregadas)
-    const count = orders.filter(
-      (o) =>
-        (o.status === 'ABERTO' || o.status === 'EM_ANALISE') &&
-        (o.order_items ?? []).some((item) => item.product_id === product.id)
-    ).length;
-    setProductConflictCount(count);
+  /**
+   * Abre o modal de ação destrutiva sobre um insumo.
+   *
+   * A contagem de conflitos vem da RPC `check_product_usage`, e não da lista de
+   * pedidos carregada na tela — que é paginada em 60 registros e portanto não
+   * enxerga todos os pedidos em aberto do sistema.
+   */
+  const handleOpenProductAction = async (product: Product, mode: ProductActionMode) => {
+    setProductActionMode(mode);
     setSelectedProductForAction(product);
+    setProductConflictCount(0);
+    setProductHistoryCount(0);
+    setIsLoadingUsage(true);
+
+    try {
+      const usage = await checkProductUsage(product.id);
+      if (usage.success) {
+        setProductConflictCount(usage.open_order_count ?? 0);
+        setProductHistoryCount(usage.total_item_count ?? 0);
+      } else {
+        alert(usage.error ?? 'Não foi possível verificar o uso deste insumo.');
+        setSelectedProductForAction(null);
+      }
+    } finally {
+      setIsLoadingUsage(false);
+    }
   };
 
-  // Confirmar desativação
-  const handleDeactivateProduct = async (force: boolean) => {
+  // Confirmar a ação destrutiva (desativar ou remover em definitivo)
+  const handleConfirmProductAction = async (force: boolean) => {
     if (!selectedProductForAction) return;
+    const product = selectedProductForAction;
     setIsSubmittingAction(true);
+
     try {
-      const res = await deactivateProduct(selectedProductForAction.id, force);
+      if (productActionMode === 'delete') {
+        const res = await deleteProduct(product.id);
+        if (res.success) {
+          if (soundEnabled) chimeService.playSuccessPing();
+          showToast(`🗑️ "${product.name}" removido em definitivo do catálogo.`);
+          setSelectedProductForAction(null);
+          await loadData(true);
+        } else if (res.code === 'HAS_ORDER_HISTORY') {
+          // O modal já oferece a desativação; sincroniza a contagem e mantém aberto
+          setProductHistoryCount(res.item_count ?? 1);
+        } else {
+          alert(res.error ?? 'Erro ao remover produto.');
+        }
+        return;
+      }
+
+      const res = await deactivateProduct(product.id, force);
       if (res.success) {
         if (soundEnabled) chimeService.playSuccessPing();
-        const affected = res.affected_orders ? ` (${res.affected_orders} pedido(s) afetado(s))` : '';
-        showToast(`🔕 "${selectedProductForAction.name}" desativado${affected}.`);
+
+        const detalhes: string[] = [];
+        if (res.affected_orders) detalhes.push(`${res.affected_orders} pedido(s) ajustado(s)`);
+        if (res.returned_to_stock) detalhes.push(`${res.returned_to_stock} un. devolvida(s) ao estoque`);
+        if (res.cancelled_orders) detalhes.push(`${res.cancelled_orders} pedido(s) cancelado(s)`);
+        const sufixo = detalhes.length ? ` — ${detalhes.join(', ')}` : '';
+
+        showToast(`🔕 "${product.name}" desativado${sufixo}.`);
         setSelectedProductForAction(null);
         await loadData(true);
       } else if (res.code === 'CONFLICT_ORDERS') {
-        // Isso não deveria acontecer pois a UI já mostra o checkbox, mas tratamos por segurança
-        alert(`Há ${res.conflict_count} pedido(s) em aberto com este produto. Use a opção de forçar desativação.`);
+        // A UI já oferece o checkbox de força; sincroniza a contagem vinda do banco
+        setProductConflictCount(res.conflict_count ?? 1);
       } else {
         alert(res.error ?? 'Erro ao desativar produto.');
       }
@@ -503,6 +584,23 @@ export default function EstoquePage() {
     return matchesStatus && matchesSearch;
   });
 
+  const sortedOrders = sortItems(
+    filteredOrders,
+    (o) => {
+      switch (orderSort) {
+        case 'created_at':
+          return dateValue(o.created_at);
+        case 'updated_at':
+          return dateValue(o.updated_at);
+        case 'status':
+          return o.status;
+        case 'items':
+          return (o.order_items ?? []).length;
+      }
+    },
+    orderSortDir
+  );
+
   // Filtragem de catálogo
   const filteredProducts = products.filter((p) => {
     const matchesSearch =
@@ -512,6 +610,25 @@ export default function EstoquePage() {
     const matchesLowStock = onlyLowStock ? p.current_stock <= p.min_stock_alert : true;
     return matchesSearch && matchesCategory && matchesLowStock;
   });
+
+  const sortedProducts = sortItems(
+    filteredProducts,
+    (p) => {
+      switch (productSort) {
+        case 'name':
+          return p.name;
+        case 'stock':
+          return p.current_stock;
+        case 'category':
+          return p.category;
+        // Distância até o ponto de reposição: crescente coloca o mais crítico
+        // (inclusive saldo negativo em relação ao alerta) no topo.
+        case 'criticality':
+          return p.current_stock - p.min_stock_alert;
+      }
+    },
+    productSortDir
+  );
 
   return (
     <div className="flex-1 p-3 sm:p-6 space-y-5 pb-28 max-w-6xl mx-auto w-full">
@@ -781,6 +898,17 @@ export default function EstoquePage() {
                 </button>
               ))}
             </div>
+
+            {/* Ordenação da lista de pedidos */}
+            <SortControl
+              options={ORDER_SORT_OPTIONS}
+              value={orderSort}
+              direction={orderSortDir}
+              onChange={setOrderSort}
+              onDirectionChange={setOrderSortDir}
+              label="Ordenar pedidos por"
+              className="max-w-sm"
+            />
           </div>
 
           {/* Lista de Pedidos */}
@@ -789,7 +917,7 @@ export default function EstoquePage() {
               <RefreshCw className="w-6 h-6 animate-spin mx-auto text-blue-600 mb-2" />
               Carregando pedidos do depósito...
             </div>
-          ) : filteredOrders.length === 0 ? (
+          ) : sortedOrders.length === 0 ? (
             <div className="p-12 text-center bg-white rounded-2xl border border-dashed border-slate-300">
               <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
               <p className="text-sm font-semibold text-slate-700">Nenhum pedido encontrado</p>
@@ -797,7 +925,7 @@ export default function EstoquePage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredOrders.map((order) => {
+              {sortedOrders.map((order) => {
                 const isExpanded = expandedOrderIds.has(order.id);
                 const items = order.order_items ?? [];
                 const totalUnits = items.reduce((acc, it) => acc + Number(it.requested_qty || 0), 0);
@@ -933,26 +1061,22 @@ export default function EstoquePage() {
                               <XCircle className="w-3.5 h-3.5" />
                               <span>Cancelar</span>
                             </button>
+                            {/* Botão único de triagem: o OrderApprovalModal já expõe
+                                internamente as duas saídas — "Aprovar & Despachar" e
+                                "Registrar Atraso" — então dois botões externos abrindo
+                                a mesma tela só dividiam a atenção do operador. */}
                             <button
                               onClick={() => setSelectedOrderForApproval(order)}
                               disabled={isSubmittingAction}
                               className="px-3.5 py-2 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 flex items-center gap-1.5 transition-all min-h-[44px]"
+                              title="Ajustar quantidades e então despachar ou registrar atraso"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
-                              <span>Analisar / Despachar</span>
+                              <span>Analisar Pedido</span>
                             </button>
 
                             <button
-                              onClick={() => setSelectedOrderForApproval(order)}
-                              disabled={isSubmittingAction}
-                              className="px-3 py-2 rounded-xl text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 flex items-center gap-1.5 transition-all min-h-[44px]"
-                            >
-                              <AlertTriangle className="w-3.5 h-3.5" />
-                              <span>Apontar Atraso</span>
-                            </button>
-
-                            <button
-                              onClick={() => handleDispatchOrder(order)}
+                              onClick={() => setSelectedOrderForDispatch(order)}
                               disabled={isSubmittingAction}
                               className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 flex items-center gap-1.5 shadow-xs transition-all active:scale-95 min-h-[44px]"
                             >
@@ -1000,7 +1124,7 @@ export default function EstoquePage() {
                               <span>Cancelar</span>
                             </button>
                             <button
-                              onClick={() => handleDispatchOrder(order)}
+                              onClick={() => setSelectedOrderForDispatch(order)}
                               disabled={isSubmittingAction}
                               className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 flex items-center gap-1.5 shadow-xs transition-all active:scale-95 min-h-[44px]"
                             >
@@ -1070,6 +1194,19 @@ export default function EstoquePage() {
                 <AlertTriangle className="w-3.5 h-3.5" />
                 <span>Apenas Estoque Baixo ({criticalItems.length})</span>
               </button>
+
+              <button
+                onClick={() => setShowInactive((v) => !v)}
+                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold border transition-all min-h-[44px] ${
+                  showInactive
+                    ? 'bg-slate-700 text-white border-slate-700 shadow-xs'
+                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+                title="Exibir também os insumos desativados, permitindo reativá-los"
+              >
+                {showInactive ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                <span>{showInactive ? 'Ocultar inativos' : 'Mostrar inativos'}</span>
+              </button>
             </div>
 
             {/* Pílulas de Categorias */}
@@ -1088,6 +1225,17 @@ export default function EstoquePage() {
                 </button>
               ))}
             </div>
+
+            {/* Ordenação do catálogo */}
+            <SortControl
+              options={PRODUCT_SORT_OPTIONS}
+              value={productSort}
+              direction={productSortDir}
+              onChange={setProductSort}
+              onDirectionChange={setProductSortDir}
+              label="Ordenar insumos por"
+              className="max-w-sm"
+            />
           </div>
 
           {/* Grid de Insumos */}
@@ -1096,7 +1244,7 @@ export default function EstoquePage() {
               <RefreshCw className="w-6 h-6 animate-spin mx-auto text-blue-600 mb-2" />
               Carregando catálogo de insumos...
             </div>
-          ) : filteredProducts.length === 0 ? (
+          ) : sortedProducts.length === 0 ? (
             <div className="p-12 text-center bg-white rounded-2xl border border-dashed border-slate-300">
               <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
               <p className="text-sm font-semibold text-slate-700">Nenhum insumo encontrado</p>
@@ -1104,7 +1252,7 @@ export default function EstoquePage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {filteredProducts.map((p) => {
+              {sortedProducts.map((p) => {
                 const isCritical = p.current_stock <= p.min_stock_alert;
                 const ratio = Math.min(100, Math.round((p.current_stock / (p.min_stock_alert * 2)) * 100));
 
@@ -1124,7 +1272,11 @@ export default function EstoquePage() {
                           </span>
                         </div>
 
-                        {isCritical ? (
+                        {p.is_active === false ? (
+                          <span className="px-2 py-1 rounded-lg text-[10px] font-extrabold bg-slate-200 text-slate-600 border border-slate-300 shrink-0">
+                            🔕 Inativo
+                          </span>
+                        ) : isCritical ? (
                           <span className="px-2 py-1 rounded-lg text-[10px] font-extrabold bg-red-100 text-red-700 border border-red-200 shrink-0">
                             ⚠️ Crítico
                           </span>
@@ -1153,32 +1305,58 @@ export default function EstoquePage() {
                     </div>
 
                     {/* Botões de Ação do Produto */}
-                    <div className="flex gap-2">
+                    {p.is_active === false ? (
+                      /* Insumo desativado: a única ação possível é trazê-lo de volta */
                       <button
-                        onClick={() => setSelectedProductForForm(p)}
-                        className="flex-1 py-2.5 px-2 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 flex items-center justify-center gap-1 transition-all active:scale-[0.98] min-h-[44px]"
-                        title="Editar produto"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        <span>Editar</span>
-                      </button>
-                      <button
-                        onClick={() => setSelectedProductForRestock(p)}
-                        className="flex-[2] py-2.5 px-3 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] min-h-[44px]"
-                      >
-                        <Plus className="w-4 h-4" />
-                        <span>Reabastecer</span>
-                      </button>
-                      <button
-                        onClick={() => handleOpenDeactivate(p)}
+                        onClick={() => handleReactivateProduct(p)}
                         disabled={isSubmittingAction}
-                        className="flex-1 py-2.5 px-2 rounded-xl text-xs font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 flex items-center justify-center gap-1 transition-all active:scale-[0.98] min-h-[44px] disabled:opacity-50"
-                        title="Desativar produto"
+                        className="w-full py-2.5 px-3 rounded-xl text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] min-h-[44px] disabled:opacity-50"
+                        title="Reativar produto no catálogo"
                       >
-                        <EyeOff className="w-3.5 h-3.5" />
-                        <span>Desativar</span>
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Reativar no Catálogo</span>
                       </button>
-                    </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setSelectedProductForForm(p)}
+                            className="flex-1 py-2.5 px-2 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 flex items-center justify-center gap-1 transition-all active:scale-[0.98] min-h-[44px]"
+                            title="Editar produto"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>Editar</span>
+                          </button>
+                          <button
+                            onClick={() => setSelectedProductForRestock(p)}
+                            className="flex-[2] py-2.5 px-3 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] min-h-[44px]"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>Reabastecer</span>
+                          </button>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleOpenProductAction(p, 'deactivate')}
+                            disabled={isSubmittingAction}
+                            className="flex-1 py-2.5 px-2 rounded-xl text-xs font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 flex items-center justify-center gap-1 transition-all active:scale-[0.98] min-h-[44px] disabled:opacity-50"
+                            title="Ocultar do catálogo preservando o histórico"
+                          >
+                            <EyeOff className="w-3.5 h-3.5" />
+                            <span>Desativar</span>
+                          </button>
+                          <button
+                            onClick={() => handleOpenProductAction(p, 'delete')}
+                            disabled={isSubmittingAction}
+                            className="flex-1 py-2.5 px-2 rounded-xl text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 flex items-center justify-center gap-1 transition-all active:scale-[0.98] min-h-[44px] disabled:opacity-50"
+                            title="Remover em definitivo (somente se nunca usado em pedidos)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Remover</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1242,13 +1420,26 @@ export default function EstoquePage() {
         isSubmitting={isSubmittingAction}
       />
 
-      {/* Modal de Desativação de Produto */}
+      {/* Modal de Confirmação de Despacho */}
+      <DispatchConfirmModal
+        isOpen={!!selectedOrderForDispatch}
+        order={selectedOrderForDispatch}
+        onClose={() => setSelectedOrderForDispatch(null)}
+        onConfirm={handleDispatchOrder}
+        isSubmitting={isSubmittingAction}
+      />
+
+      {/* Modal de Desativação / Remoção Definitiva de Produto */}
       <ProductActionModal
         isOpen={!!selectedProductForAction}
         product={selectedProductForAction}
+        mode={productActionMode}
         conflictCount={productConflictCount}
+        historyCount={productHistoryCount}
+        isLoadingUsage={isLoadingUsage}
         onClose={() => setSelectedProductForAction(null)}
-        onConfirm={handleDeactivateProduct}
+        onConfirm={handleConfirmProductAction}
+        onSwitchToDeactivate={() => setProductActionMode('deactivate')}
         isSubmitting={isSubmittingAction}
       />
     </div>
