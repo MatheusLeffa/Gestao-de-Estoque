@@ -2,7 +2,8 @@
 // Author: backend-workflow-engine
 // Todas as operações de pedido são realizadas via RPCs atômicas no Supabase (SELECT ... FOR UPDATE)
 
-import { supabase } from '@/lib/supabase/client';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
+import { mockStore } from '@/lib/services/mock-store';
 import type {
   Order,
   OrderStatus,
@@ -11,6 +12,7 @@ import type {
   TransitionOrderStatusResponse,
   ApplyTriageItemPayload,
   ApplyTriageResponse,
+  RestaurantRecommendationsResponse,
 } from '@/types/database';
 
 // ─── Transições de Status Permitidas (máquina de estados) ────────────────────
@@ -46,6 +48,15 @@ export interface PlaceOrderResult {
 export async function placeOrder(params: PlaceOrderParams): Promise<PlaceOrderResult> {
   if (!params.items.length) {
     return { success: false, error: 'O carrinho não pode estar vazio.' };
+  }
+
+  if (!isSupabaseConfigured) {
+    const res = mockStore.placeOrder(params);
+    return {
+      success: res.success,
+      orderId: res.order_id,
+      error: res.error,
+    };
   }
 
   const { data, error } = await supabase.rpc('place_order_with_reservation', {
@@ -86,6 +97,10 @@ export interface FetchOrdersParams {
 }
 
 export async function fetchOrders(params: FetchOrdersParams): Promise<Order[]> {
+  if (!isSupabaseConfigured) {
+    return mockStore.getOrders(params.restaurantId);
+  }
+
   const { data, error } = await supabase
     .from('orders')
     .select(`
@@ -130,6 +145,15 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
       success: false,
       error: `Transição de '${params.fromStatus}' para '${params.toStatus}' não é permitida.`,
     };
+  }
+
+  if (!isSupabaseConfigured) {
+    const res = mockStore.transitionOrderStatus(
+      params.orderId,
+      params.toStatus,
+      params.delayReason ?? params.reason
+    );
+    return { success: res.success, error: res.error };
   }
 
   const { data, error } = await supabase.rpc('transition_order_status', {
@@ -180,6 +204,10 @@ export async function cancelOrder(orderId: string, currentStatus: OrderStatus): 
 // ─── Busca de Todos os Pedidos (Depósito & Admin) ────────────────────────────
 
 export async function fetchAllOrders(limit: number = 50): Promise<Order[]> {
+  if (!isSupabaseConfigured) {
+    return mockStore.getOrders();
+  }
+
   const { data, error } = await supabase
     .from('orders')
     .select(`
@@ -231,6 +259,10 @@ export async function updateApprovedItems(
 ): Promise<ApplyTriageResponse> {
   if (!orderId) {
     return { success: false, error: 'Pedido não informado para a triagem.' };
+  }
+
+  if (!isSupabaseConfigured) {
+    return { success: true, order_id: orderId };
   }
 
   const payload: ApplyTriageItemPayload[] = items.map(
@@ -288,3 +320,30 @@ export async function cancelOrderByDepot(
     reason: `Cancelamento pelo depósito: ${reason}`,
   });
 }
+
+// ─── Previsibilidade de Reposição para o Restaurante ────────────────────────
+
+export async function fetchRestaurantRecommendations(
+  restaurantId: string,
+  daysWindow = 14
+): Promise<RestaurantRecommendationsResponse> {
+  if (!isSupabaseConfigured) {
+    return mockStore.getRestaurantRecommendations(restaurantId, daysWindow);
+  }
+
+  const { data, error } = await supabase.rpc('get_restaurant_recommendations', {
+    p_restaurant_id: restaurantId,
+    p_days_window: daysWindow,
+  });
+
+  if (error) {
+    console.error('[order-service] fetchRestaurantRecommendations error:', error.message);
+    return {
+      success: false,
+      error: `Erro ao buscar sugestões de reposição: ${error.message}`,
+    };
+  }
+
+  return data as RestaurantRecommendationsResponse;
+}
+

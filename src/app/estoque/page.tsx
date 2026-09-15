@@ -4,7 +4,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase/client';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { Product, Order, OrderStatus } from '@/types/database';
 import {
   Package,
@@ -31,6 +31,9 @@ import {
   Eye,
   Trash2,
   RotateCcw,
+  Sparkles,
+  TrendingDown,
+  Zap,
 } from 'lucide-react';
 import { useDemo } from '@/contexts/DemoContext';
 import { chimeService } from '@/lib/audio/chime';
@@ -45,6 +48,7 @@ import { ProductActionModal } from '@/components/estoque/ProductActionModal';
 import { OrderTimelineModal } from '@/components/restaurante/OrderTimelineModal';
 import { TransitActionModal } from '@/components/estoque/TransitActionModal';
 import { DispatchConfirmModal } from '@/components/estoque/DispatchConfirmModal';
+import { StockForecastModal } from '@/components/estoque/StockForecastModal';
 import {
   fetchAllOrders,
   transitionOrderStatus,
@@ -61,8 +65,16 @@ import {
   reactivateProduct,
   checkProductUsage,
   deleteProduct,
+  fetchStockForecasting,
+  getUrgencyBadgeConfig,
+  formatDaysRemaining,
 } from '@/lib/services/inventory-service';
-import type { ProductUpsertPayload, ProductActionMode } from '@/types/database';
+import type {
+  ProductUpsertPayload,
+  ProductActionMode,
+  StockForecastingResponse,
+  StockForecastItem,
+} from '@/types/database';
 
 type ActiveTab = 'pedidos' | 'catalogo';
 
@@ -105,6 +117,13 @@ export default function EstoquePage() {
   const [catalogSearch, setCatalogSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todos');
   const [onlyLowStock, setOnlyLowStock] = useState(false);
+  const [onlyReorderRecommended, setOnlyReorderRecommended] = useState(false);
+
+  // Previsibilidade de Estoque
+  const [forecastData, setForecastData] = useState<StockForecastingResponse | null>(null);
+  const [isForecastModalOpen, setIsForecastModalOpen] = useState(false);
+  const [restockPrefillQty, setRestockPrefillQty] = useState<number | undefined>(undefined);
+  const [restockPrefillReason, setRestockPrefillReason] = useState<string | undefined>(undefined);
 
   // Ordenação das listas
   const [orderSort, setOrderSort] = useState<OrderSortKey>('created_at');
@@ -143,18 +162,28 @@ export default function EstoquePage() {
     }, 4500);
   };
 
+  const handleOpenRestock = (product: Product, prefillQty?: number, prefillReason?: string) => {
+    setSelectedProductForRestock(product);
+    setRestockPrefillQty(prefillQty);
+    setRestockPrefillReason(prefillReason ?? (prefillQty ? 'Reposição preventiva (previsão de esgotamento)' : undefined));
+  };
+
   // Carregamento de dados
   const loadData = useCallback(async (isSilent = false) => {
     if (!isSilent) setLoading(true);
     else setRefreshing(true);
 
     try {
-      const [productsData, ordersData] = await Promise.all([
+      const [productsData, ordersData, forecastRes] = await Promise.all([
         fetchProducts(showInactive),
         fetchAllOrders(60),
+        fetchStockForecasting(14),
       ]);
       setProducts(productsData);
       setOrders(ordersData);
+      if (forecastRes.success) {
+        setForecastData(forecastRes);
+      }
     } catch (e) {
       console.error('Erro ao carregar dados do Depósito:', e);
     } finally {
@@ -165,6 +194,8 @@ export default function EstoquePage() {
 
   useEffect(() => {
     loadData();
+
+    if (!isSupabaseConfigured) return;
 
     // Inscrição Supabase Realtime
     const ordersChannel = supabase
@@ -601,6 +632,11 @@ export default function EstoquePage() {
     orderSortDir
   );
 
+  // Mapa de previsibilidade por produto
+  const forecastMap = React.useMemo(() => {
+    return new Map((forecastData?.items ?? []).map((i) => [i.product_id, i]));
+  }, [forecastData]);
+
   // Filtragem de catálogo
   const filteredProducts = products.filter((p) => {
     const matchesSearch =
@@ -608,7 +644,9 @@ export default function EstoquePage() {
       p.category.toLowerCase().includes(catalogSearch.toLowerCase());
     const matchesCategory = selectedCategory === 'Todos' || p.category === selectedCategory;
     const matchesLowStock = onlyLowStock ? p.current_stock <= p.min_stock_alert : true;
-    return matchesSearch && matchesCategory && matchesLowStock;
+    const forecast = forecastMap.get(p.id);
+    const matchesReorder = onlyReorderRecommended ? (forecast?.needs_reorder ?? false) : true;
+    return matchesSearch && matchesCategory && matchesLowStock && matchesReorder;
   });
 
   const sortedProducts = sortItems(
@@ -662,8 +700,22 @@ export default function EstoquePage() {
           </div>
         </div>
 
-        {/* Controles de Som e Atualizar */}
-        <div className="flex items-center gap-2 self-end sm:self-auto">
+        {/* Controles de Previsibilidade, Som e Atualizar */}
+        <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
+          <button
+            onClick={() => setIsForecastModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-xl shadow-xs active:scale-95 transition-all min-h-[44px]"
+            title="Abrir plano de previsibilidade e reposição recomendada"
+          >
+            <Sparkles className="w-4 h-4 text-purple-600" />
+            <span className="hidden xs:inline">Previsibilidade</span>
+            {forecastData?.summary && forecastData.summary.total_reorder_items > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-purple-600 text-white text-[10px] font-extrabold">
+                {forecastData.summary.total_reorder_items}
+              </span>
+            )}
+          </button>
+
           <button
             onClick={toggleSound}
             className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border transition-all min-h-[44px] ${
@@ -1196,6 +1248,19 @@ export default function EstoquePage() {
               </button>
 
               <button
+                onClick={() => setOnlyReorderRecommended(!onlyReorderRecommended)}
+                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold border transition-all min-h-[44px] ${
+                  onlyReorderRecommended
+                    ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                    : 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                }`}
+                title="Filtrar insumos com recomendação de reposição"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+                <span>Reposição Sugerida ({forecastData?.summary?.total_reorder_items ?? 0})</span>
+              </button>
+
+              <button
                 onClick={() => setShowInactive((v) => !v)}
                 className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold border transition-all min-h-[44px] ${
                   showInactive
@@ -1255,6 +1320,7 @@ export default function EstoquePage() {
               {sortedProducts.map((p) => {
                 const isCritical = p.current_stock <= p.min_stock_alert;
                 const ratio = Math.min(100, Math.round((p.current_stock / (p.min_stock_alert * 2)) * 100));
+                const forecast = forecastMap.get(p.id);
 
                 return (
                   <div
@@ -1302,6 +1368,52 @@ export default function EstoquePage() {
                           />
                         </div>
                       </div>
+
+                      {/* Previsibilidade de Estoque & Consumo */}
+                      {p.is_active !== false && forecast && (
+                        <div className="mt-3 p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs space-y-1.5">
+                          <div className="flex items-center justify-between gap-1 flex-wrap">
+                            <span className="text-[11px] text-slate-500 flex items-center gap-1">
+                              <TrendingDown className="w-3 h-3 text-slate-400" />
+                              Consumo: <strong className="text-slate-700">{forecast.avg_daily_consumption} {p.unit}/dia</strong>
+                            </span>
+                            {(() => {
+                              const badge = getUrgencyBadgeConfig(forecast.urgency);
+                              const daysLabel = formatDaysRemaining(forecast.days_until_stockout, forecast.urgency);
+                              return (
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border ${badge.badgeClass}`}
+                                >
+                                  <span className={`w-1.5 h-1.5 rounded-full ${badge.dotClass}`} />
+                                  {daysLabel}
+                                </span>
+                              );
+                            })()}
+                          </div>
+
+                          {forecast.needs_reorder ? (
+                            <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-200/60">
+                              <span className="text-[11px] font-semibold text-purple-900 flex items-center gap-1">
+                                <Sparkles className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                                Sugestão: Pedir +{forecast.suggested_reorder_qty} {p.unit}
+                              </span>
+                              <button
+                                onClick={() => handleOpenRestock(p, forecast.suggested_reorder_qty, 'Reposição recomendada por previsão de consumo')}
+                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-purple-600 hover:bg-purple-700 text-white flex items-center gap-1 transition-colors shrink-0 min-h-[30px]"
+                                title="Preencher reabastecimento com a quantidade recomendada"
+                              >
+                                <Zap className="w-3 h-3" />
+                                <span>Solicitar</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="pt-1 border-t border-slate-200/60 text-[10px] text-slate-500 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                              <span>Cobertura segura de estoque</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {/* Botões de Ação do Produto */}
@@ -1328,7 +1440,7 @@ export default function EstoquePage() {
                             <span>Editar</span>
                           </button>
                           <button
-                            onClick={() => setSelectedProductForRestock(p)}
+                            onClick={() => handleOpenRestock(p)}
                             className="flex-[2] py-2.5 px-3 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] min-h-[44px]"
                           >
                             <Plus className="w-4 h-4" />
@@ -1380,9 +1492,34 @@ export default function EstoquePage() {
       <RestockModal
         isOpen={!!selectedProductForRestock}
         product={selectedProductForRestock}
-        onClose={() => setSelectedProductForRestock(null)}
+        onClose={() => {
+          setSelectedProductForRestock(null);
+          setRestockPrefillQty(undefined);
+          setRestockPrefillReason(undefined);
+        }}
         onRestock={handleRestockSubmit}
         isSubmitting={isSubmittingAction}
+        initialQuantity={restockPrefillQty}
+        initialReason={restockPrefillReason}
+      />
+
+      {/* Modal de Previsibilidade de Estoque & Plano de Reposição */}
+      <StockForecastModal
+        isOpen={isForecastModalOpen}
+        onClose={() => setIsForecastModalOpen(false)}
+        forecastItems={forecastData?.items ?? []}
+        windowDays={forecastData?.window_days ?? 14}
+        isLoading={loading || refreshing}
+        onRefresh={() => loadData(true)}
+        onSelectForRestock={(prod, suggestedQty) => {
+          setIsForecastModalOpen(false);
+          handleOpenRestock(
+            prod,
+            suggestedQty,
+            'Reposição preventiva (previsão de esgotamento)'
+          );
+        }}
+        products={products}
       />
 
       {/* Modal de Timeline e Auditoria */}

@@ -186,3 +186,71 @@ Dias sem movimento aparecem com zero, para que a série não distorça a leitura
 ### 6.6 Itens Críticos
 Insumos com `is_active = true` e `current_stock <= min_stock_alert`.
 Insumos desativados não entram: não podem ser pedidos, logo não representam risco operacional.
+
+---
+
+## 7. Previsibilidade de Estoque e Recomendações de Reposição
+
+A previsibilidade de estoque é calculada no PostgreSQL pela RPC `get_stock_forecasting(p_days_window)`.
+A função é estritamente somente leitura e analisa a taxa real de saídas dos insumos para projetar a data de esgotamento e calcular lotes de compra recomendados antes do desabastecimento.
+
+### 7.1 Janela de Análise e Saídas Líquidas ($Q_{out}$)
+- Janela de análise padrão de **14 dias** (configurável via parâmetro).
+- A saída líquida de estoque considera o maior valor entre o saldo de saídas em `stock_movements` (somatório de `SAIDA_PEDIDO` descontados os `ESTORNO_CANCELAMENTO`) e o total de insumos em `order_items` de pedidos ativos ou concluídos (`o.status NOT IN ('CANCELADO')`), garantindo precisão tanto com movimentações do dia a dia quanto em bases de dados populadas por seed.
+
+### 7.2 Consumo Médio Diário e Dias até o Esgotamento
+- **Consumo médio diário ($C_{dia}$):** $\text{total\_outflow} / \text{dias\_da\_janela}$.
+- **Dias de cobertura ($D_{esgota}$):** $\text{current\_stock} / C_{dia}$ (quando $C_{dia} > 0$).
+- **Data prevista de término:** $\text{data\_atual} + D_{esgota}\text{ dias}$.
+
+### 7.3 Níveis Normativos de Urgência
+1. `ESGOTADO`: `current_stock <= 0`. Risco máximo, desabastecimento consumado.
+2. `CRITICO`: $D_{esgota} \le 2\text{ dias}$ OU (`current_stock <= min_stock_alert` com $C_{dia} > 0$). Risco iminente em até 48 horas.
+3. `ALERTA`: $D_{esgota} \le 5\text{ dias}$ OU `current_stock <= min_stock_alert`. Cobertura inferior a 1 semana.
+4. `ATENCAO`: $D_{esgota} \le 10\text{ dias}$. Programação de compra necessária nos próximos dias.
+5. `ESTAVEL`: $D_{esgota} > 10\text{ dias}$ e acima do ponto de reposição.
+6. `SEM_CONSUMO`: $C_{dia} = 0$ e acima do ponto de reposição.
+
+### 7.4 Quantidade Sugerida de Reposição ($Q_{sugerida}$)
+Para restabelecer um estoque-alvo que cubra **14 dias de demanda média projetada** mais a margem de segurança de segurança (`min_stock_alert`):
+- Com consumo ativo ($C_{dia} > 0$):
+  $$S_{alvo} = (C_{dia} \times 14) + \text{min\_stock\_alert}$$
+  $$Q_{sugerida} = \max(0, \lceil S_{alvo} - \text{current\_stock} \rceil)$$
+- Sem saídas recentes, mas abaixo da margem de segurança:
+  $$Q_{sugerida} = (\text{min\_stock\_alert} \times 2) - \text{current\_stock}$$
+- Se o estoque for estável ($S_{alvo} \le \text{current\_stock}$), $Q_{sugerida} = 0$.
+
+---
+
+## 8. Previsibilidade de Reposição no Restaurante (Kitchen Reorder Intelligence)
+
+Para que as cozinhas dos restaurantes possam solicitar insumos proativamente ao Estoque Central antes da ruptura em seus preparos, o sistema calcula recomendações personalizadas por unidade através da RPC PostgreSQL `get_restaurant_recommendations(p_restaurant_id, p_days_window)`.
+
+### 8.1 Base de Cálculo por Restaurante
+- **Janela Padrão de Análise:** 30 dias (ou configurável via parâmetro).
+- **Consumo Real da Cozinha ($Q_{rest}$):** Soma dos itens de pedidos concluídos (`CONCLUIDO_TOTAL`, `CONCLUIDO_PARCIAL`) ou em trânsito (`EM_TRANSITO`) exclusivamente daquele `p_restaurant_id`.
+- **Intervalo de Reabastecimento:** Identifica a data do último pedido do insumo pela unidade (`last_ordered_at`) e calcula os dias decorridos (`days_since_last_order`).
+- **Disponibilidade no Depósito Central:** Apenas insumos com estoque disponível positivo no Estoque Central (`current_stock > 0`) são recomendados para pedido imediato.
+
+### 8.2 Critérios Normativos de Urgência da Cozinha
+1. `URGENTE`:
+   - O restaurante consome o insumo regularmente ($\ge 2$ pedidos ou ritmo frequente) e já se passaram mais de 6 dias desde o último pedido; **OU**
+   - O estoque central está em nível crítico (`current_stock <= min_stock_alert`), exigindo que o restaurante garanta sua cota antes do desabastecimento geral.
+2. `RECOMENDADO`:
+   - Mais de 3 a 5 dias desde o último pedido em produtos de alto giro da cozinha (carnes, laticínios, hortifrúti).
+3. `ROTINA`:
+   - Itens de consumo periódico com mais de 7 dias sem reposição e disponibilidade ampla no depósito.
+
+### 8.3 Quantidade Sugerida de Pedido ($Q_{pedido}$)
+- O volume recomendado busca cobrir o ciclo médio de pedido do restaurante (calculado como média por pedido ou $\sim 3$ a 7 dias de consumo da unidade).
+- É limitado rigorosamente pelo saldo disponível no Estoque Central:
+  $$Q_{pedido} = \min(Q_{calculado}, \text{current\_stock}_{\text{central}})$$
+- Garante que a cozinha nunca tente adicionar ao carrinho mais insumos do que o armazém central possui fisicamente.
+
+### 8.4 Integração com Interface Mobile-First (/restaurante)
+- **Banner Inteligente:** Exibe contagem de itens em nível crítico/urgente com botão de "Pedir Tudo (+X un)".
+- **Filtro Rápido:** Chip `🔮 Sugeridos (N)` filtra instantaneamente o catálogo para os insumos que a cozinha necessita repor.
+- **Badges nos Cards:** Indicação visual em cada insumo com botão de adição rápida `[+ Sugerido]`.
+- **Bottom Sheet de Previsão (`RestaurantForecastModal`):** Permite inspecionar a justificativa de cada sugestão, ajustar quantidades individualmente ou adicionar o lote completo com 1 toque.
+
+

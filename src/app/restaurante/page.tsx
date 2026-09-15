@@ -14,20 +14,33 @@ import {
   RefreshCw,
   MapPin,
   Wifi,
+  Sparkles,
+  Zap,
+  Flame,
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
 } from 'lucide-react';
 import { useDemo } from '@/contexts/DemoContext';
 import { chimeService } from '@/lib/audio/chime';
-import { supabase } from '@/lib/supabase/client';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
 
 import { fetchProducts, filterProducts, extractCategories } from '@/lib/services/inventory-service';
-import { fetchOrders, placeOrder, transitionOrderStatus, cancelOrder } from '@/lib/services/order-service';
+import {
+  fetchOrders,
+  placeOrder,
+  transitionOrderStatus,
+  cancelOrder,
+  fetchRestaurantRecommendations,
+} from '@/lib/services/order-service';
 
 import { CartBottomSheet, type CartItem } from '@/components/restaurante/CartBottomSheet';
 import { OrderTimelineModal } from '@/components/restaurante/OrderTimelineModal';
 import { CheckInDeliveryModal } from '@/components/restaurante/CheckInDeliveryModal';
+import { RestaurantForecastModal } from '@/components/restaurante/RestaurantForecastModal';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 
-import type { Product, Order, CompletionType } from '@/types/database';
+import type { Product, Order, CompletionType, RestaurantRecommendationItem } from '@/types/database';
 import { SortControl } from '@/components/ui/SortControl';
 import { sortItems, dateValue, type SortDirection } from '@/lib/utils/sorting';
 
@@ -100,6 +113,11 @@ export default function RestaurantePage() {
   const [checkInOrder, setCheckInOrder] = useState<Order | null>(null);
   const [isConfirmingDelivery, setIsConfirmingDelivery] = useState(false);
 
+  // ── Forecast / Recommendations state ──
+  const [recommendations, setRecommendations] = useState<RestaurantRecommendationItem[]>([]);
+  const [loadingRecommendations, setLoadingRecommendations] = useState(true);
+  const [isForecastModalOpen, setIsForecastModalOpen] = useState(false);
+
   // ─── Loaders ────────────────────────────────────────────────────────────────
 
   const loadProducts = useCallback(async () => {
@@ -116,14 +134,59 @@ export default function RestaurantePage() {
     setLoadingOrders(false);
   }, [restaurantId]);
 
+  const loadRecommendations = useCallback(async () => {
+    setLoadingRecommendations(true);
+    const res = await fetchRestaurantRecommendations(restaurantId);
+    if (res.success && res.items) {
+      setRecommendations(res.items);
+    }
+    setLoadingRecommendations(false);
+  }, [restaurantId]);
+
   useEffect(() => {
     loadProducts();
     loadOrders();
-  }, [loadProducts, loadOrders]);
+    loadRecommendations();
+  }, [loadProducts, loadOrders, loadRecommendations]);
+
+  const handleAddBatchToCart = (items: { productId: string; quantity: number }[]) => {
+    setCart((prev) => {
+      const next = { ...prev };
+      for (const it of items) {
+        const prod = products.find((p) => p.id === it.productId);
+        const maxStock = prod ? prod.current_stock : 999;
+        const current = next[it.productId] ?? 0;
+        next[it.productId] = Math.min(maxStock, current + it.quantity);
+      }
+      return next;
+    });
+    if (soundEnabled) chimeService.playSuccessPing();
+    setOrderFeedback({
+      type: 'success',
+      message: `✨ ${items.length} insumos recomendados foram adicionados ao seu carrinho!`,
+    });
+    setTimeout(() => setOrderFeedback(null), 5000);
+  };
+
+  const handleAddSingleRecommendation = (rec: RestaurantRecommendationItem) => {
+    setCart((prev) => {
+      const current = prev[rec.product_id] ?? 0;
+      const nextQty = Math.min(rec.available_stock, current + rec.recommended_order_qty);
+      return { ...prev, [rec.product_id]: nextQty };
+    });
+    if (soundEnabled) chimeService.playSuccessPing();
+    setOrderFeedback({
+      type: 'success',
+      message: `✨ Adicionado: +${rec.recommended_order_qty} ${rec.unit} de ${rec.name}!`,
+    });
+    setTimeout(() => setOrderFeedback(null), 4000);
+  };
 
   // ─── Realtime ────────────────────────────────────────────────────────────────
 
   useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
     const channel = supabase
       .channel(`restaurante_realtime_${restaurantId}`)
       .on(
@@ -261,7 +324,18 @@ export default function RestaurantePage() {
   // ─── Derived state ────────────────────────────────────────────────────────
 
   const categories = extractCategories(products);
-  const filteredProducts = filterProducts(products, search, activeCategory);
+
+  const recommendationMap = React.useMemo(() => {
+    const map = new Map<string, RestaurantRecommendationItem>();
+    recommendations.forEach((r) => map.set(r.product_id, r));
+    return map;
+  }, [recommendations]);
+
+  const isSuggestedFilter = activeCategory === '🔮 Sugeridos';
+  const baseProducts = isSuggestedFilter
+    ? products.filter((p) => recommendationMap.has(p.id))
+    : products;
+  const filteredProducts = filterProducts(baseProducts, search, isSuggestedFilter ? 'Todos' : activeCategory);
 
   const sortedProducts = sortItems(
     filteredProducts,
@@ -382,6 +456,60 @@ export default function RestaurantePage() {
         {/* ── CATÁLOGO TAB ── */}
         {activeTab === 'catalogo' && (
           <div className="flex-1 overflow-y-auto px-3 sm:px-6 space-y-4">
+            {/* Banner de Previsibilidade / Sugestões de Reposição */}
+            {recommendations.length > 0 && (
+              <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-teal-950 text-white rounded-2xl p-4 sm:p-5 border border-emerald-500/30 shadow-card relative overflow-hidden">
+                <div className="absolute -right-8 -bottom-8 w-36 h-36 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative z-10">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-2 w-2 relative">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                      </span>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                        <Sparkles className="w-3.5 h-3.5" /> Previsibilidade de Reposição da Cozinha
+                      </span>
+                    </div>
+                    <h3 className="text-sm sm:text-base font-bold text-white">
+                      {recommendations.filter((r) => r.urgency === 'URGENTE').length > 0 ? (
+                        <>⚠️ {recommendations.filter((r) => r.urgency === 'URGENTE').length} insumo(s) em nível crítico para sua cozinha!</>
+                      ) : (
+                        <>Sugestão inteligente: {recommendations.length} insumos ideais para repor hoje</>
+                      )}
+                    </h3>
+                    <p className="text-xs text-slate-300 max-w-xl leading-relaxed">
+                      Calculado com base no seu ritmo de saídas e histórico de pedidos. Evite ruptura na sua operação.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1 sm:pt-0">
+                    <button
+                      onClick={() => setIsForecastModalOpen(true)}
+                      className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold rounded-xl transition-all shadow-md active:scale-95 min-h-[44px]"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      Ver Sugestões ({recommendations.length})
+                    </button>
+                    <button
+                      onClick={() => {
+                        const items = recommendations.map((r) => ({
+                          productId: r.product_id,
+                          quantity: r.recommended_order_qty,
+                        }));
+                        handleAddBatchToCart(items);
+                      }}
+                      className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-4 py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold rounded-xl transition-all active:scale-95 min-h-[44px]"
+                      title="Adicionar todos os itens sugeridos diretamente ao carrinho"
+                    >
+                      <Plus className="w-4 h-4 text-emerald-400" />
+                      Pedir Tudo (+{recommendations.reduce((s, r) => s + r.recommended_order_qty, 0)})
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Search & Category Filters */}
             <div className="space-y-2.5">
               <div className="relative">
@@ -395,6 +523,19 @@ export default function RestaurantePage() {
                 />
               </div>
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+                {recommendations.length > 0 && (
+                  <button
+                    onClick={() => setActiveCategory(activeCategory === '🔮 Sugeridos' ? 'Todos' : '🔮 Sugeridos')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all select-none min-h-[36px] flex items-center gap-1.5 ${
+                      activeCategory === '🔮 Sugeridos'
+                        ? 'bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-xs ring-2 ring-emerald-400/40'
+                        : 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                    Sugeridos ({recommendations.length})
+                  </button>
+                )}
                 {categories.map((cat) => (
                   <button
                     key={cat}
@@ -441,6 +582,7 @@ export default function RestaurantePage() {
                   const isOutOfStock = p.current_stock <= 0;
                   const isLowStock = p.current_stock > 0 && p.current_stock <= p.min_stock_alert;
                   const isAtMax = inCart >= p.current_stock;
+                  const rec = recommendationMap.get(p.id);
 
                   return (
                     <div
@@ -468,11 +610,43 @@ export default function RestaurantePage() {
                         </div>
                         <span className="text-[11px] font-medium text-slate-500">{p.category}</span>
                         <div className="mt-2 flex items-center justify-between text-xs">
-                          <span className="text-slate-500">Disponível:</span>
+                          <span className="text-slate-500">Disponível no Depósito:</span>
                           <span className={`font-bold ${isOutOfStock ? 'text-red-500' : isLowStock ? 'text-amber-600' : 'text-slate-700'}`}>
                             {p.current_stock} {p.unit}
                           </span>
                         </div>
+
+                        {/* Recommendation badge if this item has predicted need */}
+                        {rec && (
+                          <div
+                            className={`mt-2.5 p-2 rounded-xl border text-[11px] leading-snug flex items-center justify-between gap-2 ${
+                              rec.urgency === 'URGENTE'
+                                ? 'bg-rose-50 border-rose-200 text-rose-800'
+                                : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <Sparkles
+                                className={`w-3.5 h-3.5 shrink-0 ${
+                                  rec.urgency === 'URGENTE' ? 'text-rose-600' : 'text-emerald-600'
+                                }`}
+                              />
+                              <span className="truncate">
+                                Pedir <strong>+{rec.recommended_order_qty} {rec.unit}</strong>
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAddSingleRecommendation(rec);
+                              }}
+                              className="shrink-0 px-2 py-1 rounded-lg bg-white border border-emerald-300 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100 active:scale-95 transition-all shadow-xs"
+                            >
+                              + Sugerido
+                            </button>
+                          </div>
+                        )}
                       </div>
 
                       {/* Qty Selector */}
@@ -627,6 +801,13 @@ export default function RestaurantePage() {
         onClose={() => setCheckInOrder(null)}
         onConfirm={handleConfirmDelivery}
         isSubmitting={isConfirmingDelivery}
+      />
+
+      <RestaurantForecastModal
+        isOpen={isForecastModalOpen}
+        onClose={() => setIsForecastModalOpen(false)}
+        recommendations={recommendations}
+        onAddItemsToCart={handleAddBatchToCart}
       />
     </>
   );

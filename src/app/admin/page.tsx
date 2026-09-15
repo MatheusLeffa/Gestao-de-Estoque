@@ -18,7 +18,7 @@ import {
   Loader2,
   Timer,
 } from 'lucide-react';
-import type { AdminAnalyticsResponse, Order } from '@/types/database';
+import type { AdminAnalyticsResponse, Order, StockForecastingResponse } from '@/types/database';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { SortControl } from '@/components/ui/SortControl';
 import { sortItems, dateValue, type SortDirection } from '@/lib/utils/sorting';
@@ -34,6 +34,8 @@ import {
   ConsumptionChart,
   OrdersTimelineChart,
 } from '@/components/admin/AnalyticsCharts';
+import { StockForecastCard } from '@/components/admin/StockForecastCard';
+import { fetchStockForecasting } from '@/lib/services/inventory-service';
 
 type AdminOrderSortKey = 'created_at' | 'updated_at' | 'status' | 'restaurant';
 
@@ -46,6 +48,7 @@ const ADMIN_ORDER_SORT_OPTIONS: { value: AdminOrderSortKey; label: string }[] = 
 
 export default function AdminPage() {
   const [analytics, setAnalytics] = useState<AdminAnalyticsResponse | null>(null);
+  const [forecast, setForecast] = useState<StockForecastingResponse | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -60,9 +63,10 @@ export default function AdminPage() {
     else setLoading(true);
 
     try {
-      const [analyticsRes, ordersRes] = await Promise.all([
+      const [analyticsRes, ordersRes, forecastRes] = await Promise.all([
         fetchAdminAnalytics(),
         fetchAllOrders(60),
+        fetchStockForecasting(14),
       ]);
 
       if (!analyticsRes.success) {
@@ -72,6 +76,9 @@ export default function AdminPage() {
         setAnalytics(analyticsRes);
       }
       setOrders(ordersRes);
+      if (forecastRes.success) {
+        setForecast(forecastRes);
+      }
     } catch (e) {
       setError('Falha inesperada ao carregar o painel.');
       console.error('Erro ao carregar dados do admin:', e);
@@ -219,6 +226,14 @@ export default function AdminPage() {
         <DelayReasonsChart data={analytics?.delay_reasons ?? []} />
         <ConsumptionChart data={analytics?.consumption ?? []} />
       </div>
+
+      {/* Previsibilidade de Estoque & Reposição */}
+      <StockForecastCard
+        items={forecast?.items ?? []}
+        summary={forecast?.summary}
+        windowDays={forecast?.window_days ?? 14}
+        isLoading={loading || refreshing}
+      />
 
       {/* Visão geral dos pedidos */}
       <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-subtle space-y-3">
