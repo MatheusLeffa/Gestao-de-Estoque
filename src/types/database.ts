@@ -259,3 +259,80 @@ export interface AdminAnalyticsResponse {
   orders_timeline?: TimelinePoint[];
   error?: string;
 }
+
+// ─── Previsibilidade de Estoque & Reposição (RPC get_stock_forecasting) ─────
+
+export type ForecastUrgency =
+  | 'ESGOTADO'
+  | 'CRITICO'
+  | 'ALERTA'
+  | 'ATENCAO'
+  | 'ESTAVEL'
+  | 'SEM_CONSUMO';
+
+export interface StockForecastItem {
+  product_id: string;
+  name: string;
+  category: ProductCategory;
+  unit: string;
+  current_stock: number;
+  min_stock_alert: number;
+  total_outflow: number;
+  avg_daily_consumption: number;
+  days_until_stockout: number | null;
+  urgency: ForecastUrgency;
+  projected_stockout_date: string | null;
+  suggested_reorder_qty: number;
+  recommendation_text: string;
+  needs_reorder: boolean;
+}
+
+export interface StockForecastingSummary {
+  total_products: number;
+  exhausted_count: number;
+  critical_count: number;
+  alert_count: number;
+  total_reorder_items: number;
+}
+
+export interface StockForecastingResponse {
+  success: boolean;
+  window_days?: number;
+  summary?: StockForecastingSummary;
+  items?: StockForecastItem[];
+  error?: string;
+}
+
+// ─── Previsibilidade de Reposição para o Restaurante ────────────────────────
+
+export type RestaurantRecommendationUrgency = 'URGENTE' | 'RECOMENDADO' | 'ROTINA';
+
+export interface RestaurantRecommendationItem {
+  product_id: string;
+  name: string;
+  category: ProductCategory;
+  unit: string;
+  available_stock: number;
+  avg_daily_consumption: number;
+  last_ordered_at: string | null;
+  days_since_last_order: number | null;
+  recommended_order_qty: number;
+  urgency: RestaurantRecommendationUrgency;
+  recommendation_reason: string;
+}
+
+export interface RestaurantRecommendationsSummary {
+  total_recommended: number;
+  urgent_count: number;
+  total_suggested_units: number;
+}
+
+export interface RestaurantRecommendationsResponse {
+  success: boolean;
+  restaurant_id?: string;
+  summary?: RestaurantRecommendationsSummary;
+  items?: RestaurantRecommendationItem[];
+  error?: string;
+}
+
+

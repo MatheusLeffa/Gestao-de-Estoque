@@ -13,6 +13,8 @@ interface RestockModalProps {
   onClose: () => void;
   onRestock: (productId: string, quantity: number, reason: string) => Promise<void>;
   isSubmitting?: boolean;
+  initialQuantity?: number;
+  initialReason?: string;
 }
 
 const RESTOCK_REASONS = [
@@ -28,6 +30,8 @@ export function RestockModal({
   onClose,
   onRestock,
   isSubmitting = false,
+  initialQuantity,
+  initialReason,
 }: RestockModalProps) {
   const [quantity, setQuantity] = useState<string>('');
   const [reason, setReason] = useState('Chegada de Fornecedor');
@@ -35,13 +39,33 @@ export function RestockModal({
   const [error, setError] = useState('');
 
   React.useEffect(() => {
-    if (!isOpen) {
+    if (isOpen) {
+      if (initialQuantity && initialQuantity > 0) {
+        setQuantity(String(initialQuantity));
+      } else {
+        setQuantity('');
+      }
+
+      if (initialReason) {
+        if (RESTOCK_REASONS.includes(initialReason)) {
+          setReason(initialReason);
+          setCustomReason('');
+        } else {
+          setReason('Outro');
+          setCustomReason(initialReason);
+        }
+      } else {
+        setReason('Chegada de Fornecedor');
+        setCustomReason('');
+      }
+      setError('');
+    } else {
       setQuantity('');
       setError('');
       setReason('Chegada de Fornecedor');
       setCustomReason('');
     }
-  }, [isOpen]);
+  }, [isOpen, initialQuantity, initialReason]);
 
   if (!isOpen || !product) return null;
 

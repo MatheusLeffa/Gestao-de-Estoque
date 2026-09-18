@@ -72,8 +72,15 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
   - ⚠️ *Itens Críticos / Estoque Baixo* (saldo abaixo do ponto de reposição configurado).
 - **Gestão de Insumos & Reabastecimento:**
   - Barra de busca instantânea por nome do insumo.
-  - Filtros por categoria (*Hortifrúti, Carnes, Bebidas, etc.*) e filtro rápido `[⚠️ Apenas Estoque Baixo]`.
+  - Filtros por categoria (*Hortifrúti, Carnes, Bebidas, etc.*), filtro rápido `[⚠️ Apenas Estoque Baixo]` e filtro inteligente `[🔮 Reposição Sugerida]`.
   - Modal rápido de entrada/reabastecimento manual de saldo no depósito.
+  - **Previsibilidade de Estoque & Plano de Reposição (RPC `get_stock_forecasting`):**
+    - Análise contínua das saídas dos últimos 14 dias para calcular a média diária de consumo (*burn rate*).
+    - Projeção de esgotamento (*days until stockout* e data prevista de término).
+    - Badges semânticos por criticidade (`ESGOTADO`, `CRITICO`, `ALERTA`, `ATENCAO`, `ESTAVEL`, `SEM_CONSUMO`).
+    - Cálculo de lote de compra sugerido ($S_{alvo} = (C_{dia} \times 14) + \text{min\_stock\_alert}$).
+    - Ação de reabastecimento em 1 clique: botão direto que abre o `RestockModal` com a quantidade sugerida pré-preenchida.
+    - Modal dedicado `StockForecastModal` (Plano de Reposição & Previsibilidade) e botão de acesso rápido no header.
 - **Gestão do Catálogo de Produtos (CRUD):**
   - **Cadastro e edição:** o depósito cria novos insumos e configura nome, categoria, unidade, saldo inicial e ponto de reposição (`min_stock_alert`). A edição não altera saldo — saldo só muda por reabastecimento ou movimentação de pedido.
   - **Desativação (soft-delete):** o insumo sai do catálogo visível ao restaurante, mas o histórico de pedidos permanece íntegro. Produtos inativos continuam consultáveis pelo depósito através do alternador `[👁️ Mostrar inativos]` e podem ser **reativados** a qualquer momento.
@@ -96,6 +103,12 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
   - Barra de busca instantânea e pílulas de filtro por categoria.
   - Exibição de saldo em tempo real (bloqueio visual para não permitir selecionar quantidade superior ao saldo disponível).
   - Carrinho touch-friendly (Bottom Sheet no mobile) com cálculo automático e validação de checkout.
+- **🔮 Previsibilidade de Reposição da Cozinha (Reorder Intelligence):**
+  - Banner inteligente no topo do catálogo destacando insumos em nível crítico e contagem de itens ideais para repor hoje.
+  - Filtro em 1 clique `🔮 Sugeridos (N)` para isolar insumos previstos para reabastecimento.
+  - Badges individuais nos cards de insumos indicando sugestão de pedido (`+X un`) com botão de adição rápida `[+ Sugerido]`.
+  - **Modal de Previsão (`RestaurantForecastModal`):** Gaveta inferior que lista os itens recomendados com justificativa detalhada (dias desde o último pedido, urgência `URGENTE`/`RECOMENDADO`/`ROTINA`), controle de quantidade por item e botão "Adicionar Todos ao Pedido".
+  - **Cálculo no PostgreSQL:** RPC `get_restaurant_recommendations()` que projeta o ritmo de consumo exclusivo da unidade e limita o lote ao saldo disponível no Depósito Central.
 - **Acompanhamento do Pedido & Linha do Tempo (Audit Log):**
   - Timeline visual estilo app de entrega com histórico completo de cada mudança de status, horários e motivos de atraso.
 - **Conferência Enriquecida na Entrega (Check-in):**
@@ -118,6 +131,7 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
   - **Curva de consumo de insumos.** Ranking dos insumos mais consumidos, somando `COALESCE(delivered_qty, approved_qty, requested_qty)` dos itens de pedidos `CONCLUIDO_TOTAL` e `CONCLUIDO_PARCIAL`. Pedidos não entregues não representam consumo e ficam de fora.
   - **Volume de pedidos no tempo.** Série diária dos últimos 14 dias, separando pedidos criados dos concluídos.
   - **Itens críticos.** Insumos ativos com `current_stock <= min_stock_alert`.
+  - **Previsibilidade da Cadeia de Suprimentos (`StockForecastCard`).** Projeção de esgotamento e cálculo de lotes de reposição recomendados com base nas saídas líquidas dos últimos 14 dias pela RPC `get_stock_forecasting()`.
 - **Biblioteca de gráficos:** [Recharts](https://recharts.org) 3.x — escolhida por suportar oficialmente o React 19 e por resolver a responsividade de 360px através do `ResponsiveContainer`, exigido pelo guard rail Mobile-First.
 
 ### 🔀 D. Ordenação de Listas (Convenção Transversal)
@@ -298,6 +312,10 @@ O **Tech Lead (Orquestrador Principal)** coordena e divide as demandas entre os 
   - Painel com visão unificada, cards de KPIs, gráfico de volume de pedidos no tempo, rosca de desfechos de entrega, barras de motivos de atraso e curva de consumo de insumos.
   - Toda agregação consolidada no PostgreSQL pela RPC `get_admin_analytics()`, com as métricas definidas normativamente em `docs/business-rules.md` seção 6. Gráficos em Recharts 3.x com `ResponsiveContainer`, e estado vazio honesto em cada um deles.
   - *Agentes:* `analytics-specialist` + `cloud-db-architect` + `ui-ux-designer` + `frontend-engineer` + `doc-specialist`.
+
+- [x] **Fase 5.5: Previsibilidade de Estoque e Recomendações de Reposição**
+  - Motor analítico no PostgreSQL via RPC `get_stock_forecasting()`, taxa de consumo diário (*burn rate*), dias até o esgotamento (*days until stockout*), recomendações automáticas de reposição com 1-click no Depósito Central (`StockForecastModal`) e visão executiva de riscos de abastecimento no Administrador (`StockForecastCard`).
+  - *Agentes:* `cloud-db-architect` + `backend-workflow-engine` + `frontend-engineer` + `ui-ux-designer` + `doc-specialist`.
 
 - [ ] **Fase 6: Testes de QA, Concorrência, Versionamento & Deploy na Vercel**
   - Testes de concorrência simultânea, validação em viewports mobile, esteira de verificação/build e checklist de deploy na Vercel.

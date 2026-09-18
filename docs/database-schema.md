@@ -215,3 +215,19 @@ erDiagram
    - Com histórico, retorna `HAS_ORDER_HISTORY` com a contagem de itens, e a interface
      oferece a desativação como alternativa.
    - As `stock_movements` do insumo caem por `CASCADE` junto com a linha.
+
+10. **`get_admin_analytics()`**:
+    - Agregações consolidadas do painel do Administrador (docs/business-rules.md seção 6).
+    - Somente leitura. Retorna `{ success, kpis, delay_reasons, outcomes, consumption, orders_timeline }`.
+
+11. **`get_stock_forecasting(p_days_window int DEFAULT 14)`**:
+    - Previsibilidade de estoque central e recomendações de compra baseadas no ritmo de saídas globais (docs/business-rules.md seção 7).
+    - Somente leitura. Analisa `stock_movements` e `order_items` para calcular o consumo diário médio, dias até o esgotamento, data projetada de término, urgência e lote de compra recomendado.
+    - Retorna `{ success, window_days, summary, items }`.
+
+12. **`get_restaurant_recommendations(p_restaurant_id uuid, p_days_window int DEFAULT 30)`**:
+    - Recomendações de reposição para a cozinha do restaurante (docs/business-rules.md seção 8).
+    - Somente leitura. Analisa o histórico de pedidos daquela unidade específica, o tempo decorrido desde o último abastecimento e o estoque disponível no depósito central.
+    - Retorna `{ success, restaurant_id, window_days, summary, items }` onde cada item inclui `product_id`, `name`, `category`, `unit`, `urgency` (`URGENTE`, `RECOMENDADO`, `ROTINA`), `recommended_order_qty`, `reason`, `days_since_last_order`, `available_stock`.
+
+

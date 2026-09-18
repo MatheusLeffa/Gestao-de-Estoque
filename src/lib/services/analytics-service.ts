@@ -5,10 +5,15 @@
 // O cliente não varre pedidos nem soma quantidades: a definição normativa de cada
 // métrica vive em docs/business-rules.md seção 6 e é implementada no banco.
 
-import { supabase } from '@/lib/supabase/client';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
+import { mockStore } from '@/lib/services/mock-store';
 import type { AdminAnalyticsResponse } from '@/types/database';
 
 export async function fetchAdminAnalytics(): Promise<AdminAnalyticsResponse> {
+  if (!isSupabaseConfigured) {
+    return mockStore.getAdminAnalytics();
+  }
+
   const { data, error } = await supabase.rpc('get_admin_analytics');
 
   if (error) {
