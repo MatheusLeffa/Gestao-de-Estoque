@@ -1,0 +1,4 @@
+#!/bin/sh
+# InsumoSync: bloqueia o commit se a auditoria de credenciais falhar.
+# Ativação (uma vez por clone): npm run hooks:install
+exec node scripts/security-audit.mjs

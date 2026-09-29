@@ -9,8 +9,8 @@ trigger: always_on
    - É terminantemente proibido inserir, logar, commitar ou definir chaves de API, JWT tokens, credenciais de banco ou URLs em fallbacks de código (ex: `process.env.KEY || '...'`).
    - Todo acesso a serviços externos DEVE ser consumido exclusivamente via `process.env.*`.
 
-2. **Auditoria Pré-Commit Obrigatória (`security-auditor`):**
-   - Antes de realizar qualquer commit no Git ou finalizar uma tarefa, o script `node scripts/security-audit.mjs` deve ser executado. Se houver qualquer violação, a operação deve ser abortada imediatamente.
+2. **Auditoria Pré-Commit Obrigatória (hook `.githooks/pre-commit`):**
+   - Antes de realizar qualquer commit no Git ou finalizar uma tarefa, o script `node scripts/security-audit.mjs` é executado automaticamente pelo hook de pre-commit (ative uma vez com `npm run hooks:install`). Se houver qualquer violação, o commit é abortado. Nunca use `--no-verify` para contorná-lo.
 
 3. **Proteção no Git:**
    - O arquivo `.gitignore` deve manter bloqueados todos os arquivos `.env`, `.env.local` e artefatos confidenciais.

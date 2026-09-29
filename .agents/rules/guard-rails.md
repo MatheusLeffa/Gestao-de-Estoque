@@ -15,4 +15,4 @@ trigger: always_on
    - Proibido o uso de tipos genéricos soltos (`any`). Todas as entidades e RPCs devem estar tipadas em `src/types/database.ts`.
 
 4. **Living Blueprint Sincronizado:**
-   - O arquivo `antigravity.md` na raiz e os módulos em `docs/` devem ser mantidos 100% sincronizados pelo `doc-specialist` após cada entrega.
+   - O arquivo `antigravity.md` na raiz e os módulos em `docs/` são atualizados **antes** do código por quem faz a mudança, e o `verifier` confere a sincronia ao fechar a entrega.

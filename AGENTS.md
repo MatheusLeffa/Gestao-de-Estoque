@@ -1,23 +1,53 @@
-# 🤖 Equipe de Agentes e Subagentes Especializados — InsumoSync
+# 🤖 Subagentes Especializados — InsumoSync
 
-Este arquivo declara formalmente os 8 subagentes especializados do projeto **InsumoSync**, seus papéis, gatilhos de atuação e runbooks.
+Índice único dos subagentes do projeto. Cada definição tem **uma fonte**, em
+`.claude/agents/`, e um ponto de entrada curto para o Google Antigravity em
+`.agents/skills/`, que aponta para ela.
 
 ---
 
-## 👥 Matriz de Agentes Especializados
+## 👥 Matriz de Agentes
 
-| Agente / Subagente | Especialidade | Gatilho de Atuação | Skill / Runbook |
+| Agente | Domínio | Quando acionar | Definição |
 | :--- | :--- | :--- | :--- |
-| 🛡️ **`security-auditor`** | Auditoria de Segurança & Zero Chaves | Execução obrigatória antes de qualquer commit ou alteração sensível | [security-auditor](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/.agents/skills/security-auditor/SKILL.md) |
-| 🏛️ **`cloud-db-architect`** | Supabase, SQL, RLS & Realtime | Migrations, DDLs, Stored Procedures com `SELECT ... FOR UPDATE` | [cloud-db-architect](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/.agents/skills/cloud-db-architect/SKILL.md) |
-| ⚙️ **`backend-workflow-engine`** | Máquina de Estados & Regras de Negócio | Transições de status, estorno de estoque e validações | [backend-workflow-engine](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/.agents/skills/backend-workflow-engine/SKILL.md) |
-| 📱 **`frontend-engineer`** | Next.js App Router & Client State | Rotas, hooks de estado, consumo de RPCs e Realtime | [frontend-engineer](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/.agents/skills/frontend-engineer/SKILL.md) |
-| 🎨 **`ui-ux-designer`** | Mobile-First UI & Micro-interações | Tailwind CSS, Bottom Sheets, touch targets e áudio chime | [ui-ux-designer](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/.agents/skills/ui-ux-designer/SKILL.md) |
-| 📊 **`analytics-specialist`** | KPIs, Gráficos & Dashboards | Métricas de pontualidade, curvas de consumo e relatórios | [analytics-specialist](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/.agents/skills/analytics-specialist/SKILL.md) |
-| 📜 **`doc-specialist`** | Living Blueprint & Hub-and-Spoke | Sincronização pós-tarefa de `antigravity.md` e `docs/*` | [doc-specialist](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/.agents/skills/doc-specialist/SKILL.md) |
-| 🧪 **`qa-devops-agent`** | CI/CD, Demo Switcher & Concorrência | Testes de carga/concorrência, seed e esteira de build | [qa-devops-agent](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/.agents/skills/qa-devops-agent/SKILL.md) |
+| 🏛️ **`db-engineer`** | Tudo que roda no Postgres: migrations, RPCs atômicas, máquina de estados, estorno, RLS, Realtime, agregações de analytics e forecast | Qualquer tarefa que crie ou altere SQL ou que movimente `current_stock` | [`.claude/agents/db-engineer.md`](.claude/agents/db-engineer.md) |
+| 📱 **`frontend-engineer`** | Tudo que roda no navegador: App Router, componentes, UI mobile-first, gráficos, services, Realtime, chime, DemoSwitcher | Criar ou alterar telas, componentes, hooks, contextos e services | [`.claude/agents/frontend-engineer.md`](.claude/agents/frontend-engineer.md) |
+| 🧪 **`verifier`** | Verificação independente e somente-leitura: credenciais, tsc/build, invariante de estoque, RLS, sincronia da documentação | Ao fechar uma entrega, e sempre que env, cliente Supabase ou RLS forem tocados | [`.claude/agents/verifier.md`](.claude/agents/verifier.md) |
 
 ---
 
-## 🔒 Diretriz de Execução do `security-auditor`:
-> Antes de qualquer `git commit` ou conclusão de tarefa, o subagente `security-auditor` DEVE rodar `node scripts/security-audit.mjs` para certificar que nenhum token, chave privada, anon key ou URL em fallback foi inserida no código.
+## 🧭 Quando delegar
+
+Subagente começa sem contexto e relê a documentação, então delegar tem custo. Vale a pena
+quando a tarefa é **autocontida e do domínio de um agente**, quando há **trabalho paralelo
+independente** (ex.: RPC nova e tela nova ao mesmo tempo), ou quando se quer uma
+**verificação feita por quem não escreveu o código**. Ajustes pequenos o agente principal
+faz direto, respeitando as mesmas regras.
+
+**Documentação é responsabilidade de quem muda o código.** Não existe agente dedicado a
+docs: o `db-engineer` e o `frontend-engineer` atualizam `antigravity.md` e `docs/` antes
+do código, e o `verifier` confere a sincronia.
+
+---
+
+## 🔒 Auditoria de credenciais
+
+`node scripts/security-audit.mjs` roda automaticamente em todo `git commit` pelo hook
+[`.githooks/pre-commit`](.githooks/pre-commit). Ative uma vez por clone:
+
+```bash
+npm run hooks:install
+```
+
+Nunca use `git commit --no-verify` para contornar a auditoria.
+
+---
+
+## 🗂️ Histórico
+
+Até a Fase 5.5 o projeto usava 8 subagentes (`security-auditor`, `cloud-db-architect`,
+`backend-workflow-engine`, `frontend-engineer`, `ui-ux-designer`, `analytics-specialist`,
+`doc-specialist`, `qa-devops-agent`). Eles foram consolidados nos 3 acima porque dividiam
+os mesmos domínios — a máquina de estados vive em RPCs, e UI e front são o mesmo arquivo
+`.tsx`. Os cabeçalhos `Author:` nos arquivos de código citam os nomes antigos e foram
+mantidos como registro histórico.
