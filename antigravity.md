@@ -108,7 +108,7 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
   - Filtro em 1 clique `🔮 Sugeridos (N)` para isolar insumos previstos para reabastecimento.
   - Badges individuais nos cards de insumos indicando sugestão de pedido (`+X un`) com botão de adição rápida `[+ Sugerido]`.
   - **Modal de Previsão (`RestaurantForecastModal`):** Gaveta inferior que lista os itens recomendados com justificativa detalhada (dias desde o último pedido, urgência `URGENTE`/`RECOMENDADO`/`ROTINA`), controle de quantidade por item e botão "Adicionar Todos ao Pedido".
-  - **Cálculo no PostgreSQL:** RPC `get_restaurant_recommendations()` que projeta o ritmo de consumo exclusivo da unidade e limita o lote ao saldo disponível no Depósito Central.
+  - **Cálculo no PostgreSQL:** RPC `get_restaurant_recommendations(p_restaurant_id, p_days_window)` que projeta o ritmo de consumo exclusivo da unidade e limita o lote ao saldo disponível no Depósito Central.
 - **Acompanhamento do Pedido & Linha do Tempo (Audit Log):**
   - Timeline visual estilo app de entrega com histórico completo de cada mudança de status, horários e motivos de atraso.
 - **Conferência Enriquecida na Entrega (Check-in):**

@@ -15,6 +15,7 @@ CREATE OR REPLACE FUNCTION get_stock_forecasting(p_days_window INT DEFAULT 14)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
   v_days            NUMERIC;

@@ -227,22 +227,28 @@ Para restabelecer um estoque-alvo que cubra **14 dias de demanda média projetad
 Para que as cozinhas dos restaurantes possam solicitar insumos proativamente ao Estoque Central antes da ruptura em seus preparos, o sistema calcula recomendações personalizadas por unidade através da RPC PostgreSQL `get_restaurant_recommendations(p_restaurant_id, p_days_window)`.
 
 ### 8.1 Base de Cálculo por Restaurante
-- **Janela Padrão de Análise:** 30 dias (ou configurável via parâmetro).
-- **Consumo Real da Cozinha ($Q_{rest}$):** Soma dos itens de pedidos concluídos (`CONCLUIDO_TOTAL`, `CONCLUIDO_PARCIAL`) ou em trânsito (`EM_TRANSITO`) exclusivamente daquele `p_restaurant_id`.
+- **Janela Padrão de Análise:** 14 dias (configurável via `p_days_window`).
+- **Consumo Real da Cozinha ($Q_{rest}$):** Soma de `COALESCE(delivered_qty, approved_qty, requested_qty)` dos itens de pedidos daquele `p_restaurant_id` criados na janela, excluindo apenas `CANCELADO`.
+- **Consumo médio diário ($C_{dia}$):** $Q_{rest} / \text{dias\_da\_janela}$.
 - **Intervalo de Reabastecimento:** Identifica a data do último pedido do insumo pela unidade (`last_ordered_at`) e calcula os dias decorridos (`days_since_last_order`).
-- **Disponibilidade no Depósito Central:** Apenas insumos com estoque disponível positivo no Estoque Central (`current_stock > 0`) são recomendados para pedido imediato.
+- **Insumos considerados:** produtos ativos que o restaurante pediu na janela **ou** que estão com `current_stock <= min_stock_alert`.
+- **Disponibilidade no Depósito Central:** Apenas insumos com `current_stock > 0` são recomendados; itens esgotados ficam fora da lista.
 
 ### 8.2 Critérios Normativos de Urgência da Cozinha
+Avaliados nesta ordem:
 1. `URGENTE`:
-   - O restaurante consome o insumo regularmente ($\ge 2$ pedidos ou ritmo frequente) e já se passaram mais de 6 dias desde o último pedido; **OU**
-   - O estoque central está em nível crítico (`current_stock <= min_stock_alert`), exigindo que o restaurante garanta sua cota antes do desabastecimento geral.
+   - O estoque central está baixo, mas não zerado (`0 < current_stock <= min_stock_alert`); **OU**
+   - O restaurante pediu o insumo na janela e já se passaram 3 dias ou mais desde o último pedido (`days_since_last_order >= 3`).
 2. `RECOMENDADO`:
-   - Mais de 3 a 5 dias desde o último pedido em produtos de alto giro da cozinha (carnes, laticínios, hortifrúti).
+   - O restaurante pediu o insumo na janela (`order_count >= 1`) e não se enquadra em `URGENTE`.
 3. `ROTINA`:
-   - Itens de consumo periódico com mais de 7 dias sem reposição e disponibilidade ampla no depósito.
+   - O restaurante não pediu o insumo na janela; ele entra apenas por estar abaixo do ponto de reposição, mas não é `URGENTE`.
 
 ### 8.3 Quantidade Sugerida de Pedido ($Q_{pedido}$)
-- O volume recomendado busca cobrir o ciclo médio de pedido do restaurante (calculado como média por pedido ou $\sim 3$ a 7 dias de consumo da unidade).
+- Com consumo na janela ($C_{dia} > 0$): cobertura de **5 dias** de consumo da unidade, com mínimo de 1:
+  $$Q_{calculado} = \max(1, \lceil C_{dia} \times 5 \rceil)$$
+- Sem consumo na janela: metade do ponto de reposição, com mínimo de 1:
+  $$Q_{calculado} = \max(1, \lceil \text{min\_stock\_alert} \times 0{,}5 \rceil)$$
 - É limitado rigorosamente pelo saldo disponível no Estoque Central:
   $$Q_{pedido} = \min(Q_{calculado}, \text{current\_stock}_{\text{central}})$$
 - Garante que a cozinha nunca tente adicionar ao carrinho mais insumos do que o armazém central possui fisicamente.
