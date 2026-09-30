@@ -1,6 +1,6 @@
 -- InsumoSync: Realistic Seed Data for Demo & Academic Validation
 -- Author: qa-devops-agent / cloud-db-architect
--- Project: sqncxfboizrudyetetxi
+-- Aplicar depois de supabase/migrations/20260929000000_baseline.sql
 
 -- 1. Insert Model Restaurant
 INSERT INTO restaurants (id, name, address, is_active)
