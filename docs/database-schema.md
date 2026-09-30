@@ -225,9 +225,11 @@ erDiagram
     - Somente leitura. Analisa `stock_movements` e `order_items` para calcular o consumo diário médio, dias até o esgotamento, data projetada de término, urgência e lote de compra recomendado.
     - Retorna `{ success, window_days, summary, items }`.
 
-12. **`get_restaurant_recommendations(p_restaurant_id uuid, p_days_window int DEFAULT 30)`**:
+12. **`get_restaurant_recommendations(p_restaurant_id uuid, p_days_window int DEFAULT 14)`**:
     - Recomendações de reposição para a cozinha do restaurante (docs/business-rules.md seção 8).
-    - Somente leitura. Analisa o histórico de pedidos daquela unidade específica, o tempo decorrido desde o último abastecimento e o estoque disponível no depósito central.
-    - Retorna `{ success, restaurant_id, window_days, summary, items }` onde cada item inclui `product_id`, `name`, `category`, `unit`, `urgency` (`URGENTE`, `RECOMENDADO`, `ROTINA`), `recommended_order_qty`, `reason`, `days_since_last_order`, `available_stock`.
+    - Somente leitura, `SECURITY DEFINER` com `search_path = public`. Analisa o histórico de pedidos daquela unidade específica, o tempo decorrido desde o último pedido e o estoque disponível no depósito central.
+    - Retorna `{ success, restaurant_id, summary, items }`, onde `summary` traz `total_recommended`, `urgent_count` e `total_suggested_units`. Cada item inclui `product_id`, `name`, `category`, `unit`, `available_stock`, `avg_daily_consumption`, `last_ordered_at`, `days_since_last_order`, `recommended_order_qty`, `urgency` (`URGENTE`, `RECOMENDADO`, `ROTINA`) e `recommendation_reason`.
+
+> **Segurança:** `get_stock_forecasting` e `get_restaurant_recommendations` fixam `search_path = public`. As demais RPCs `SECURITY DEFINER` ainda não fixam e estão sinalizadas pelo advisor do Supabase; o mesmo vale para a execução por `anon`. Tratar antes do deploy na Vercel.
 
 

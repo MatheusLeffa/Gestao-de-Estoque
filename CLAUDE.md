@@ -88,7 +88,8 @@ group by p.id;
 npm run dev                      # desenvolvimento local (única forma de rodar hoje)
 npx tsc --noEmit                 # obrigatório, 0 erros
 npm run build                    # obrigatório, 0 erros
-node scripts/security-audit.mjs  # obrigatório antes de qualquer commit
+node scripts/security-audit.mjs  # roda sozinho no pre-commit; nunca use --no-verify
+npm run hooks:install            # uma vez por clone, ativa o hook de pre-commit
 ```
 
 ---
@@ -108,9 +109,17 @@ Nenhuma tarefa é encerrada sem:
 
 ## 7. Delegação
 
-As especialidades de [`AGENTS.md`](AGENTS.md) estão disponíveis como subagentes em
-`.claude/agents/`. Use-os quando a tarefa for claramente do domínio de um deles —
-especialmente `cloud-db-architect` para SQL/RPC e `security-auditor` antes de commitar.
+Três subagentes, indexados em [`AGENTS.md`](AGENTS.md) e definidos em `.claude/agents/`:
+
+- **`db-engineer`** — qualquer SQL, RPC, migration ou movimentação de `current_stock`.
+  É o único com acesso de escrita ao Supabase.
+- **`frontend-engineer`** — telas, componentes, UI mobile-first, services e Realtime.
+- **`verifier`** — verificação somente-leitura ao fechar uma entrega.
+
+Delegue quando a tarefa for autocontida e do domínio de um deles, quando houver
+trabalho paralelo independente, ou para a verificação final. Ajuste pequeno se faz
+direto. Não há agente de documentação: quem muda o código atualiza `antigravity.md`
+e `docs/`.
 
 ---
 

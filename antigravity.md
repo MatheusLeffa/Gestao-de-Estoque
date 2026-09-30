@@ -45,7 +45,7 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
 ### 📐 B. Arquitetura e Boas Práticas
 4. **Controle de Dependências:** Justificar e validar tecnicamente antes de instalar novos pacotes npm (priorizar soluções nativas e pacotes essenciais).
 5. **Tipagem Estrita:** Proibição de tipos `any` genéricos sem validação formal (`src/types/database.ts`).
-6. **Separação de Camadas:** Isolamento estrito entre apresentação (Components), regras de negócio (`workflow-engine`) e persistência (`cloud-db-architect`).
+6. **Separação de Camadas:** Isolamento estrito entre apresentação (Components), regras de negócio e persistência (RPCs no PostgreSQL, domínio do `db-engineer`). O cliente é conveniência; a RPC é a lei.
 7. **Atomicidade de Concorrência:** Proibido calcular baixa de saldo no front-end JS. Todo desconto e reserva de estoque ocorre no PostgreSQL via Stored Procedure RPC com `SELECT ... FOR UPDATE`.
 8. **Mobile-First Real & Custo Zero:** Telas otimizadas para 360px–420px, alvos de toque >= 44x44px, Bottom Sheets, `overflow-x: hidden` e 100% de conformidade com o Free-Tier da Vercel e Supabase.
 
@@ -58,7 +58,7 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
 12. **Living Blueprint Sincronizado:** `antigravity.md` é a única fonte da verdade e é atualizado antes de qualquer modificação de código.
 13. **Comunicação Objetiva:** Respostas diretas em português com links clicáveis para os arquivos.
 14. **Planejamento Prévio:** Apresentação obrigatória do `implementation_plan.md` antes de alterações estruturais.
-15. **Orquestração Mandatória por Especialidade:** O Tech Lead deve delegar as tarefas técnicas aos subagentes especializados conforme seu domínio.
+15. **Delegação por Especialidade:** O Tech Lead delega aos subagentes do [`AGENTS.md`](AGENTS.md) tarefas autocontidas do domínio deles, trabalho paralelo independente e a verificação final (`verifier`). Ajustes pequenos são feitos direto, sob as mesmas regras.
 16. **Disponibilidade do Modo Demo:** O `DemoSwitcher` deve permanecer funcional e acessível em todas as telas para facilitar a demonstração acadêmica.
 
 ---
@@ -108,7 +108,7 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
   - Filtro em 1 clique `🔮 Sugeridos (N)` para isolar insumos previstos para reabastecimento.
   - Badges individuais nos cards de insumos indicando sugestão de pedido (`+X un`) com botão de adição rápida `[+ Sugerido]`.
   - **Modal de Previsão (`RestaurantForecastModal`):** Gaveta inferior que lista os itens recomendados com justificativa detalhada (dias desde o último pedido, urgência `URGENTE`/`RECOMENDADO`/`ROTINA`), controle de quantidade por item e botão "Adicionar Todos ao Pedido".
-  - **Cálculo no PostgreSQL:** RPC `get_restaurant_recommendations()` que projeta o ritmo de consumo exclusivo da unidade e limita o lote ao saldo disponível no Depósito Central.
+  - **Cálculo no PostgreSQL:** RPC `get_restaurant_recommendations(p_restaurant_id, p_days_window)` que projeta o ritmo de consumo exclusivo da unidade e limita o lote ao saldo disponível no Depósito Central.
 - **Acompanhamento do Pedido & Linha do Tempo (Audit Log):**
   - Timeline visual estilo app de entrega com histórico completo de cada mudança de status, horários e motivos de atraso.
 - **Conferência Enriquecida na Entrega (Check-in):**
@@ -226,58 +226,32 @@ group by p.id;
 
 ## 🤖 6. Arquitetura de Subagentes Especializados
 
-> 📌 **DIRETRIZ DE ORQUESTRAÇÃO & DELEGAÇÃO:**
-> O **Tech Lead (IA Orquestradora)** DEVE sempre, sempre que possível, utilizar e delegar as demandas técnicas aos subagentes especializados conforme a necessidade e especialidade de cada um.
-> As tarefas devem ser formalmente divididas e executadas sob a responsabilidade do subagente especialista em seu domínio, assegurando foco técnico, rastreabilidade e máxima qualidade na entrega.
+> 📌 **DIRETRIZ DE DELEGAÇÃO:**
+> O Tech Lead (IA orquestradora) delega a um subagente quando a tarefa é **autocontida e do domínio dele**, quando há **trabalho paralelo independente**, ou quando se quer **verificação por quem não escreveu o código**. Ajustes pequenos o Tech Lead faz direto, sob as mesmas regras. Subagente começa sem contexto e relê a documentação, então delegar sem necessidade custa caro e perde detalhes na passagem.
 
-O **Tech Lead (Orquestrador Principal)** coordena e divide as demandas entre os seguintes subagentes especializados, cujas configurações, regras e runbooks residem na pasta [`.agents/`](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/.agents) e no [`AGENTS.md`](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/AGENTS.md):
+O índice dos subagentes vive no [`AGENTS.md`](AGENTS.md). A definição completa de cada um está em [`.claude/agents/`](.claude/agents), e o ponto de entrada para o Google Antigravity em [`.agents/skills/`](.agents/skills) aponta para ela.
 
-1. 🛡️ **`security-auditor` (Auditoria de Segurança & Zero Chaves Expostas)**:
-   - Execução mandatória de varredura de credenciais (`scripts/security-audit.mjs`) antes de qualquer commit ou entrega.
-   - Bloqueio de qualquer tentativa de expor tokens, chaves privadas ou URLs em fallbacks hardcoded.
-   - Auditoria contínua do repositório Git e políticas de RLS.
+1. 🏛️ **`db-engineer` (tudo que roda no Postgres)**:
+   - Modelagem relacional, migrations e DDL no Supabase, espelhadas em `supabase/migrations/`.
+   - RPCs `SECURITY DEFINER` atômicas com `SELECT ... FOR UPDATE`, incluindo a máquina de estados dos pedidos (`ABERTO` ➔ `EM_ANALISE` ➔ `EM_TRANSITO` / `EM_ATRASO` ➔ `CONCLUIDO_*` / `CANCELADO`), justificativas obrigatórias validadas no banco e estorno por `approved_qty`.
+   - Agregações de KPI e previsão (`get_admin_analytics()`, `get_stock_forecasting()`), RLS e canais Realtime.
+   - Único subagente com acesso de escrita ao Supabase.
 
-2. 🏛️ **`cloud-db-architect` (Supabase, SQL, RLS, Realtime & Cloud)**:
-   - Modelagem relacional PostgreSQL no Supabase, scripts DDL e migrations.
-   - Políticas de Row Level Security (RLS) e infraestrutura Vercel / Supabase Free-tier.
-   - Stored Procedures RPC com transações atômicas (`SELECT ... FOR UPDATE`) para concorrência de estoque.
-   - Configuração de canais Supabase Realtime para sincronização instantânea.
+2. 📱 **`frontend-engineer` (tudo que roda no navegador)**:
+   - Next.js App Router, React Server/Client Components, React Hooks e Context API.
+   - Services em `src/lib/services/` consumindo RPCs e subscrições Realtime.
+   - UI mobile-first (360–420px, alvos ≥ 44×44px, Bottom Sheets, `overflow-x: hidden`) com Tailwind, Lucide e primitivos no estilo Shadcn; gráficos Recharts; áudio chime; `DemoSwitcher`.
 
-2. ⚙️ **`backend-workflow-engine` (Back-end, Máquina de Estados & Regras de Negócio)**:
-   - Implementação da máquina de estados finita dos pedidos (`ABERTO` ➔ `EM_ANALISE` ➔ `EM_TRANSITO` / `EM_ATRASO` ➔ `CONCLUIDO_*` / `CANCELADO`).
-   - Validação de regras de negócio, Server Actions, Route Handlers e validações com Zod.
-   - Gestão de estorno de estoque em cancelamentos e orquestração de logs de auditoria.
+3. 🧪 **`verifier` (verificação independente, somente leitura)**:
+   - `node scripts/security-audit.mjs`, `npx tsc --noEmit` e `npm run build`.
+   - Invariante de estoque, advisors de RLS, espelhamento das migrations e sincronia entre código, `antigravity.md` e `docs/`.
+   - Não edita arquivos; reporta com arquivo, linha e correção sugerida.
 
-3. 📱 **`frontend-engineer` (Front-end Next.js, App Router & Integração)**:
-   - Estruturação do Next.js (App Router, TypeScript, React Server/Client Components).
-   - Gerenciamento de estado local/global (React Hooks, Context API) e consumo de APIs/RPCs.
-   - Subscrições ativas do Supabase Realtime no cliente para atualização reativa das telas.
+**Documentação é responsabilidade de quem muda o código.** O subagente que altera uma regra atualiza este arquivo e o módulo correspondente de `docs/` antes do código; decisão com trade-off vira ADR numerado em `docs/adr/`. O `verifier` confere a sincronia ao fechar a entrega.
 
-4. 🎨 **`ui-ux-designer` (Mobile-First UI, Design System & Micro-interações)**:
-   - Estilização com Tailwind CSS, Shadcn UI / Radix primitives e Lucide Icons.
-   - Construção de interfaces Mobile-First reais (360px-420px, touch targets >= 44x44px, `overflow-x: hidden`).
-   - Componentes touch-friendly: Bottom Sheets (gavetas para carrinho/filtros), pílulas de filtro e timelines visuais.
-   - Síntese de áudio chime suave via Web Audio API para notificações sonoras.
+**Auditoria de credenciais automática:** o hook [`.githooks/pre-commit`](.githooks/pre-commit) roda `scripts/security-audit.mjs` em todo commit (ativação única por clone: `npm run hooks:install`).
 
-5. 📊 **`analytics-specialist` (KPIs, Dashboards & Relatórios)**:
-   - Mini-dashboard de contadores e estoque crítico do Depósito Central.
-   - Dashboard completo do Administrador com métricas de pontualidade, curvas de consumo e gráficos de motivos de atraso / desfechos de entrega.
-
-6. 📜 **`doc-specialist` (Living Blueprint, Governança & Documentação Técnica Hub-and-Spoke)**:
-   - **Guardião da Documentação Viva:** Responsável direto por manter o `antigravity.md` (Hub Central) e todos os módulos em `docs/` rigorosamente atualizados.
-   - **Registro de Decisões (ADRs):** Documenta todas as decisões arquiteturais e técnicas em `docs/adr/`.
-   - **Sincronização Pós-Tarefa Mandatória:** Sempre que qualquer subagente finalizar uma tarefa ou alterar uma regra, o `doc-specialist` é acionado para revisar, validar e registrar a alteração nas documentações correspondentes.
-   - **Manutenção dos Módulos Especializados (`docs/`):**
-     - `docs/business-rules.md`: Regras de negócio aprofundadas, prazos e cálculos.
-     - `docs/database-schema.md`: Dicionário de dados, RPCs, RLS e índices.
-     - `docs/state-machine.md`: Máquina de estados detalhada e condições de transição.
-     - `docs/personas-and-ux.md`: Especificações de telas e fluxos de cada persona.
-
-7. 🧪 **`qa-devops-agent` (Versionamento, CI/CD, Demo Switcher, Seed & Testes de Concorrência)**:
-   - Implementação e manutenção do componente global `DemoSwitcher`.
-   - Criação e execução de scripts de seed com dados realistas de restaurantes e insumos.
-   - Testes de concorrência simultânea (race conditions) nas RPCs do Supabase.
-   - Configuração de versionamento Git, validações de build (`npm run build`, linting) e checklist de CI/CD para deploy na Vercel.
+> 🗂️ Até a Fase 5.5 o projeto usava 8 subagentes (`security-auditor`, `cloud-db-architect`, `backend-workflow-engine`, `frontend-engineer`, `ui-ux-designer`, `analytics-specialist`, `doc-specialist`, `qa-devops-agent`). Eles foram consolidados nos 3 acima porque dividiam os mesmos domínios. As fases concluídas do roadmap mantêm os nomes originais como registro histórico.
 
 ---
 
@@ -319,7 +293,7 @@ O **Tech Lead (Orquestrador Principal)** coordena e divide as demandas entre os 
 
 - [ ] **Fase 6: Testes de QA, Concorrência, Versionamento & Deploy na Vercel**
   - Testes de concorrência simultânea, validação em viewports mobile, esteira de verificação/build e checklist de deploy na Vercel.
-  - *Agentes:* `qa-devops-agent` + `doc-specialist` + Tech Lead.
+  - *Agentes:* `verifier` + Tech Lead.
 
 ---
 

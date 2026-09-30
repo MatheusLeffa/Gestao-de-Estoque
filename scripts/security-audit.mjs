@@ -1,5 +1,5 @@
 // InsumoSync: Automated Security & Credential Audit Script
-// Subagent: security-auditor
+// Executado pelo hook .githooks/pre-commit e pelo subagente verifier
 // Scans the codebase for exposed keys, JWT tokens, connection strings, or hardcoded credentials.
 
 import fs from 'fs';
@@ -72,7 +72,7 @@ function scanDirectory(dir, issues = []) {
 
 console.log('🔒 ========================================================');
 console.log('🔒 INSUMOSYNC: AUDITORIA DE SEGURANÇA E ZERO CREDENCIAIS');
-console.log('🔒 Subagente: security-auditor');
+console.log('🔒 Executado pelo hook de pre-commit e pelo verifier');
 console.log('🔒 ========================================================\n');
 
 const issues = scanDirectory(process.cwd());
@@ -82,7 +82,7 @@ if (issues.length > 0) {
   for (const issue of issues) {
     console.error(` - Arquivo: ${issue.file} | Violação: ${issue.pattern} (${issue.matches} ocorrência(s))`);
   }
-  console.error('\n🚫 O commit ou entrega foi abortado pelo security-auditor.');
+  console.error('\n🚫 O commit ou entrega foi abortado pela auditoria de segurança.');
   process.exit(1);
 } else {
   console.log('✅ AUDITORIA CONCLUÍDA COM SUCESSO: 0 VULNERABILIDADES OU CHAVES EXPOSTAS.');
