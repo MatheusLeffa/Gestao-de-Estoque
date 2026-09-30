@@ -10,7 +10,7 @@ trigger: always_on
    - Todo acesso a serviços externos DEVE ser consumido exclusivamente via `process.env.*`.
 
 2. **Auditoria Pré-Commit Obrigatória (hook `.githooks/pre-commit`):**
-   - Antes de realizar qualquer commit no Git ou finalizar uma tarefa, o script `node scripts/security-audit.mjs` é executado automaticamente pelo hook de pre-commit (ative uma vez com `npm run hooks:install`). Se houver qualquer violação, o commit é abortado. Nunca use `--no-verify` para contorná-lo.
+   - Antes de realizar qualquer commit no Git ou finalizar uma tarefa, o script `node scripts/security-audit.mjs` é executado automaticamente pelo hook de pre-commit (ativado sozinho no `npm install`). Se houver qualquer violação, o commit é abortado. Nunca use `--no-verify` para contorná-lo.
 
 3. **Proteção no Git:**
    - O arquivo `.gitignore` deve manter bloqueados todos os arquivos `.env`, `.env.local` e artefatos confidenciais.

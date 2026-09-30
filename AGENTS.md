@@ -33,11 +33,8 @@ do código, e o `verifier` confere a sincronia.
 ## 🔒 Auditoria de credenciais
 
 `node scripts/security-audit.mjs` roda automaticamente em todo `git commit` pelo hook
-[`.githooks/pre-commit`](.githooks/pre-commit). Ative uma vez por clone:
-
-```bash
-npm run hooks:install
-```
+[`.githooks/pre-commit`](.githooks/pre-commit). O hook é ativado sozinho no `npm install`
+(script `prepare`); `npm run hooks:install` faz o mesmo manualmente, se preciso.
 
 Nunca use `git commit --no-verify` para contornar a auditoria.
 

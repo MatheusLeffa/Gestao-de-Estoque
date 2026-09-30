@@ -89,7 +89,7 @@ npm run dev                      # desenvolvimento local (única forma de rodar 
 npx tsc --noEmit                 # obrigatório, 0 erros
 npm run build                    # obrigatório, 0 erros
 node scripts/security-audit.mjs  # roda sozinho no pre-commit; nunca use --no-verify
-npm run hooks:install            # uma vez por clone, ativa o hook de pre-commit
+npm run hooks:install            # ativa o hook manualmente (o npm install já faz isso)
 ```
 
 ---
