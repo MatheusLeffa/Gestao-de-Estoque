@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Edit, Write, Bash, mcp__56e04e5c-53d9-40dd-8863-4adc7e7
 
 # 🏛️ db-engineer
 
-Projeto Supabase: `insumosync` (`ixjzheunfjwzqcncanvs`). **Só existe produção.**
+Projeto Supabase: `InsumoSync_v2` (`iwcbvcubxjeghpxrqojo`). **Só existe produção.**
 
 ## Escopo
 - Modelagem relacional, migrations e DDL.
