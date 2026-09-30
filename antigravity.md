@@ -249,7 +249,7 @@ O índice dos subagentes vive no [`AGENTS.md`](AGENTS.md). A definição complet
 
 **Documentação é responsabilidade de quem muda o código.** O subagente que altera uma regra atualiza este arquivo e o módulo correspondente de `docs/` antes do código; decisão com trade-off vira ADR numerado em `docs/adr/`. O `verifier` confere a sincronia ao fechar a entrega.
 
-**Auditoria de credenciais automática:** o hook [`.githooks/pre-commit`](.githooks/pre-commit) roda `scripts/security-audit.mjs` em todo commit (ativação única por clone: `npm run hooks:install`).
+**Auditoria de credenciais automática:** o hook [`.githooks/pre-commit`](.githooks/pre-commit) roda `scripts/security-audit.mjs` em todo commit (ativado sozinho no `npm install` pelo script `prepare`).
 
 > 🗂️ Até a Fase 5.5 o projeto usava 8 subagentes (`security-auditor`, `cloud-db-architect`, `backend-workflow-engine`, `frontend-engineer`, `ui-ux-designer`, `analytics-specialist`, `doc-specialist`, `qa-devops-agent`). Eles foram consolidados nos 3 acima porque dividiam os mesmos domínios. As fases concluídas do roadmap mantêm os nomes originais como registro histórico.
 
