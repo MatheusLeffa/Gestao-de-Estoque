@@ -15,9 +15,10 @@ rodar inteiramente em free-tier.
 **Stack:** Next.js 15 (App Router) · React 19 · TypeScript · Tailwind · Lucide ·
 Supabase (Postgres + RLS + Realtime) · deploy Vercel.
 
-**Projeto Supabase:** `insumosync` (`ixjzheunfjwzqcncanvs`, região `sa-east-1`).
+**Projeto Supabase:** `InsumoSync_v2` (`iwcbvcubxjeghpxrqojo`, região `sa-east-1`).
 Só existe ambiente de produção; não há staging. Migrations são aplicadas via MCP do
-Supabase e **espelhadas em `supabase/migrations/`** no mesmo commit.
+Supabase e **espelhadas em `supabase/migrations/`** no mesmo commit. Para recriar o
+banco do zero: `supabase/migrations/` em ordem e depois `supabase/seed.sql`.
 
 ---
 

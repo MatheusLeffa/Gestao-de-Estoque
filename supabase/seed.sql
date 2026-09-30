@@ -22,7 +22,7 @@ VALUES
     ('b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b05', 'Tomate Italiano Selecionado', 'Hortifrúti', 'KG', 35.0, 12.0),
     ('b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b06', 'Cebola Roxa Especial', 'Hortifrúti', 'KG', 25.0, 10.0),
     ('b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b07', 'Alface Americana Orgânica', 'Hortifrúti', 'CX', 3.0, 5.0), -- ⚠️ Estoque Baixo!
-    ('b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b08', 'Batata Asterix para Fritura', 'KG', 80.0, 25.0),
+    ('b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b08', 'Batata Asterix para Fritura', 'Hortifrúti', 'KG', 80.0, 25.0),
 
     -- Laticínios
     ('b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b09', 'Queijo Muçarela de Búfala', 'Laticínios', 'KG', 15.0, 6.0),
