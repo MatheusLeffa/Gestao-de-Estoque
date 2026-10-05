@@ -49,6 +49,7 @@ import { OrderTimelineModal } from '@/components/restaurante/OrderTimelineModal'
 import { TransitActionModal } from '@/components/estoque/TransitActionModal';
 import { DispatchConfirmModal } from '@/components/estoque/DispatchConfirmModal';
 import { StockForecastModal } from '@/components/estoque/StockForecastModal';
+import { ProductThumbnail } from '@/components/ui/ProductThumbnail';
 import {
   fetchAllOrders,
   transitionOrderStatus,
@@ -1330,27 +1331,37 @@ export default function EstoquePage() {
                     }`}
                   >
                     <div>
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <h3 className="font-bold text-sm sm:text-base text-slate-900">{p.name}</h3>
-                          <span className="inline-block mt-0.5 text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
-                            {p.category}
-                          </span>
-                        </div>
+                      <div className="flex items-start gap-3">
+                        <ProductThumbnail
+                          imageUrl={p.image_url}
+                          name={p.name}
+                          category={p.category}
+                          size="md"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <h3 className="font-bold text-sm sm:text-base text-slate-900 leading-snug">{p.name}</h3>
+                              <span className="inline-block mt-1 text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
+                                {p.category}
+                              </span>
+                            </div>
 
-                        {p.is_active === false ? (
-                          <span className="px-2 py-1 rounded-lg text-[10px] font-extrabold bg-slate-200 text-slate-600 border border-slate-300 shrink-0">
-                            🔕 Inativo
-                          </span>
-                        ) : isCritical ? (
-                          <span className="px-2 py-1 rounded-lg text-[10px] font-extrabold bg-red-100 text-red-700 border border-red-200 shrink-0">
-                            ⚠️ Crítico
-                          </span>
-                        ) : (
-                          <span className="px-2 py-1 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
-                            Estoque OK
-                          </span>
-                        )}
+                            {p.is_active === false ? (
+                              <span className="px-2 py-1 rounded-lg text-[10px] font-extrabold bg-slate-200 text-slate-600 border border-slate-300 shrink-0">
+                                🔕 Inativo
+                              </span>
+                            ) : isCritical ? (
+                              <span className="px-2 py-1 rounded-lg text-[10px] font-extrabold bg-red-100 text-red-700 border border-red-200 shrink-0">
+                                ⚠️ Crítico
+                              </span>
+                            ) : (
+                              <span className="px-2 py-1 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                                Estoque OK
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
 
                       {/* Barra de saúde do estoque */}

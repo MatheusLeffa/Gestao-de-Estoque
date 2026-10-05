@@ -6,6 +6,8 @@
 import React, { useState } from 'react';
 import { X, Plus, Package, Loader2, AlertCircle } from 'lucide-react';
 import type { Product } from '@/types/database';
+import { ProductThumbnail } from '@/components/ui/ProductThumbnail';
+import { ModalPortal } from '@/components/ui/ModalPortal';
 
 interface RestockModalProps {
   isOpen: boolean;
@@ -88,12 +90,13 @@ export function RestockModal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex flex-col justify-end sm:items-center sm:justify-center"
-      role="dialog"
-      aria-modal="true"
-    >
-      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => !isSubmitting && onClose()} />
+    <ModalPortal isOpen={isOpen}>
+      <div
+        className="fixed inset-0 z-50 flex flex-col justify-end sm:items-center sm:justify-center"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => !isSubmitting && onClose()} />
 
       <div className="relative bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-sm flex flex-col animate-in slide-in-from-bottom-4 sm:zoom-in-95 duration-300">
         <div className="flex justify-center pt-3 pb-1 sm:hidden">
@@ -102,10 +105,13 @@ export function RestockModal({
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <span className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
-              <Package className="w-4 h-4" />
-            </span>
+          <div className="flex items-center gap-2.5">
+            <ProductThumbnail
+              imageUrl={product.image_url}
+              name={product.name}
+              category={product.category}
+              size="sm"
+            />
             <div>
               <h2 className="text-sm font-bold text-slate-900 leading-tight">{product.name}</h2>
               <p className="text-xs text-slate-500">
@@ -219,5 +225,6 @@ export function RestockModal({
         </div>
       </div>
     </div>
+  </ModalPortal>
   );
 }

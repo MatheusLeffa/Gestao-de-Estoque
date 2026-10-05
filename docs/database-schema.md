@@ -30,6 +30,7 @@ erDiagram
         numeric current_stock
         numeric min_stock_alert
         boolean is_active
+        text image_url
         timestamptz created_at
     }
 
@@ -97,6 +98,7 @@ erDiagram
 | `current_stock` | `NUMERIC` | `NOT NULL DEFAULT 0 CHECK (current_stock >= 0)` | Saldo atual no depósito central |
 | `min_stock_alert`| `NUMERIC` | `NOT NULL DEFAULT 5` | Ponto de pedido para alerta de estoque crítico |
 | `is_active` | `BOOLEAN` | `NOT NULL DEFAULT true` | Insumo visível no catálogo. `false` é o soft-delete: some do catálogo do restaurante e preserva todo o histórico |
+| `image_url` | `TEXT` | `NULL` | URL pública da imagem recortada (1:1 WebP) no Supabase Storage ou DataURL no mock |
 | `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` | Data de cadastro |
 
 > Índice `idx_products_is_active` em `is_active`, usado pelo filtro padrão do catálogo.
@@ -188,9 +190,9 @@ erDiagram
    - Retorna `{ success, order_id, returned_to_stock }`, onde `returned_to_stock` é positivo
      quando houve devolução ao estoque e negativo quando houve reserva adicional.
 
-5. **`create_or_update_product(p_id uuid, p_name text, p_category text, p_unit text, p_current_stock numeric, p_min_stock_alert numeric)`**:
-   - `p_id` nulo cria o insumo (gerando `ENTRADA_MANUAL` quando há saldo inicial);
-     `p_id` preenchido atualiza os dados cadastrais.
+5. **`create_or_update_product(p_id uuid, p_name text, p_category text, p_unit text, p_current_stock numeric, p_min_stock_alert numeric, p_image_url text DEFAULT NULL)`**:
+   - `p_id` nulo cria o insumo (gerando `ENTRADA_MANUAL` quando há saldo inicial e associando `image_url` se enviada);
+     `p_id` preenchido atualiza os dados cadastrais (nome, categoria, unidade, min_stock_alert e image_url).
    - A edição **não** altera `current_stock` — saldo só muda por `restock_product` ou por
      movimentação de pedido.
 

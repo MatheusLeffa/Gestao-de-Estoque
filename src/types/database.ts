@@ -42,6 +42,7 @@ export interface Product {
   current_stock: number;
   min_stock_alert: number;
   is_active: boolean;
+  image_url?: string | null;
   created_at: string;
 }
 
@@ -140,6 +141,7 @@ export interface ProductUpsertPayload {
   unit: string;
   current_stock: number;
   min_stock_alert: number;
+  image_url?: string | null;
 }
 
 export interface ProductUpsertResponse {

@@ -443,6 +443,7 @@ class MockDataStore {
         unit: payload.unit,
         min_stock_alert: payload.min_stock_alert,
         current_stock: payload.current_stock ?? this.products[index].current_stock,
+        image_url: payload.image_url !== undefined ? (payload.image_url === '' ? null : payload.image_url) : this.products[index].image_url,
       };
       this.persist();
       return { success: true, product_id: payload.id, action: 'updated' };
@@ -457,6 +458,7 @@ class MockDataStore {
       min_stock_alert: payload.min_stock_alert,
       current_stock: payload.current_stock ?? 0,
       is_active: true,
+      image_url: payload.image_url || null,
       created_at: new Date().toISOString(),
     };
 

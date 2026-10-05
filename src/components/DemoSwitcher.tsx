@@ -34,7 +34,7 @@ export const DemoSwitcher: React.FC = () => {
   ];
 
   return (
-    <header className="sticky top-0 z-50 w-full bg-slate-900/95 backdrop-blur-md border-b border-slate-800 text-white shadow-md">
+    <header className="sticky top-0 z-30 w-full bg-slate-900/95 backdrop-blur-md border-b border-slate-800 text-white shadow-md">
       <div className="max-w-7xl mx-auto px-2 sm:px-4 h-14 flex items-center justify-between gap-2">
         {/* Brand & Mode Tag */}
         <div className="flex items-center gap-2 flex-shrink-0">

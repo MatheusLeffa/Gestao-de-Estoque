@@ -82,7 +82,8 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
     - Ação de reabastecimento em 1 clique: botão direto que abre o `RestockModal` com a quantidade sugerida pré-preenchida.
     - Modal dedicado `StockForecastModal` (Plano de Reposição & Previsibilidade) e botão de acesso rápido no header.
 - **Gestão do Catálogo de Produtos (CRUD):**
-  - **Cadastro e edição:** o depósito cria novos insumos e configura nome, categoria, unidade, saldo inicial e ponto de reposição (`min_stock_alert`). A edição não altera saldo — saldo só muda por reabastecimento ou movimentação de pedido.
+  - **Cadastro e edição:** o depósito cria novos insumos e configura nome, categoria, unidade, saldo inicial, ponto de reposição (`min_stock_alert`) e **foto do insumo** (`image_url`). A edição permite adicionar, recortar (proporção 1:1 via Canvas nativo mobile-first) ou remover a imagem, e não altera saldo — saldo só muda por reabastecimento ou movimentação de pedido.
+  - **Identificação Visual & Placeholders:** cards do depósito e catálogo do restaurante exibem miniatura fotográfica de 72x72px com cantos arredondados, ou ícones temáticos vetoriais por categoria (Carnes, Hortifrúti, Laticínios, Mercearia, Bebidas) quando sem foto.
   - **Desativação (soft-delete):** o insumo sai do catálogo visível ao restaurante, mas o histórico de pedidos permanece íntegro. Produtos inativos continuam consultáveis pelo depósito através do alternador `[👁️ Mostrar inativos]` e podem ser **reativados** a qualquer momento.
   - **Deleção definitiva:** permitida **somente** para insumos que nunca apareceram em nenhum pedido. Havendo qualquer histórico, a deleção é bloqueada (`HAS_ORDER_HISTORY`) e a interface oferece a desativação como alternativa — preservando integralmente a rastreabilidade dos pedidos já realizados.
   - **Ação forçada sobre pedidos em aberto:** se o insumo estiver em pedidos `ABERTO` ou `EM_ANALISE`, a desativação é barrada por padrão. O operador pode forçá-la mediante aviso explícito, e o sistema então: **(1)** estorna ao estoque o saldo reservado do item, **(2)** zera o item no pedido registrando como justificativa a inativação do catálogo, e **(3)** se o pedido ficar sem nenhum item, cancela-o automaticamente com o motivo devidamente registrado na auditoria.
@@ -290,6 +291,10 @@ O índice dos subagentes vive no [`AGENTS.md`](AGENTS.md). A definição complet
 - [x] **Fase 5.5: Previsibilidade de Estoque e Recomendações de Reposição**
   - Motor analítico no PostgreSQL via RPC `get_stock_forecasting()`, taxa de consumo diário (*burn rate*), dias até o esgotamento (*days until stockout*), recomendações automáticas de reposição com 1-click no Depósito Central (`StockForecastModal`) e visão executiva de riscos de abastecimento no Administrador (`StockForecastCard`).
   - *Agentes:* `cloud-db-architect` + `backend-workflow-engine` + `frontend-engineer` + `ui-ux-designer` + `doc-specialist`.
+
+- [x] **Fase 5.6: Imagens nos Produtos, Recorte Nativo 1:1 & Portal de Modais**
+  - Cadastro e edição de foto do insumo no Depósito (`ProductFormModal`), componente nativo de recorte 1:1 sem dependências externas (`ImageCropModal`), renderização de miniaturas temáticas (`ProductThumbnail`), suporte a Supabase Storage com fallback resiliente para cache local de imagens WebP DataURL, e componente `ModalPortal` para renderizar modais diretamente no `document.body` garantindo isolamento de stacking contexts e travamento de scroll limpo.
+  - *Agentes:* `frontend-engineer` + `ui-ux-designer` + `db-engineer`.
 
 - [ ] **Fase 6: Testes de QA, Concorrência, Versionamento & Deploy na Vercel**
   - Testes de concorrência simultânea, validação em viewports mobile, esteira de verificação/build e checklist de deploy na Vercel.

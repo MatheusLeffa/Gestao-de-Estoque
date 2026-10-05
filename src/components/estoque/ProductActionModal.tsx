@@ -16,6 +16,7 @@ import {
   Archive,
 } from 'lucide-react';
 import type { Product, ProductActionMode } from '@/types/database';
+import { ProductThumbnail } from '@/components/ui/ProductThumbnail';
 
 interface ProductActionModalProps {
   isOpen: boolean;
@@ -117,9 +118,12 @@ export function ProductActionModal({
         <div className="px-5 py-4 space-y-4">
           {/* Identificação do insumo */}
           <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center gap-3">
-            <span className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 shrink-0">
-              <Package className="w-5 h-5" />
-            </span>
+            <ProductThumbnail
+              imageUrl={product.image_url}
+              name={product.name}
+              category={product.category}
+              size="sm"
+            />
             <div className="text-xs min-w-0">
               <p className="font-bold text-slate-900 truncate">{product.name}</p>
               <p className="text-slate-500">

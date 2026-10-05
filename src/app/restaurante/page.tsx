@@ -39,6 +39,7 @@ import { OrderTimelineModal } from '@/components/restaurante/OrderTimelineModal'
 import { CheckInDeliveryModal } from '@/components/restaurante/CheckInDeliveryModal';
 import { RestaurantForecastModal } from '@/components/restaurante/RestaurantForecastModal';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { ProductThumbnail } from '@/components/ui/ProductThumbnail';
 
 import type { Product, Order, CompletionType, RestaurantRecommendationItem } from '@/types/database';
 import { SortControl } from '@/components/ui/SortControl';
@@ -596,19 +597,30 @@ export default function RestaurantePage() {
                       }`}
                     >
                       <div>
-                        <div className="flex items-start justify-between gap-2 mb-1">
-                          <span className="font-semibold text-sm text-slate-900 leading-snug">{p.name}</span>
-                          {isOutOfStock ? (
-                            <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-red-100 text-red-600">
-                              Esgotado
-                            </span>
-                          ) : isLowStock ? (
-                            <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-700">
-                              ⚠️ Baixo
-                            </span>
-                          ) : null}
+                        <div className="flex items-start gap-3 mb-2">
+                          <ProductThumbnail
+                            imageUrl={p.image_url}
+                            name={p.name}
+                            category={p.category}
+                            size="md"
+                            className="shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-1.5">
+                              <span className="font-semibold text-sm text-slate-900 leading-snug line-clamp-2">{p.name}</span>
+                              {isOutOfStock ? (
+                                <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-red-100 text-red-600">
+                                  Esgotado
+                                </span>
+                              ) : isLowStock ? (
+                                <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-700">
+                                  ⚠️ Baixo
+                                </span>
+                              ) : null}
+                            </div>
+                            <span className="text-[11px] font-medium text-slate-500 block mt-0.5">{p.category}</span>
+                          </div>
                         </div>
-                        <span className="text-[11px] font-medium text-slate-500">{p.category}</span>
                         <div className="mt-2 flex items-center justify-between text-xs">
                           <span className="text-slate-500">Disponível no Depósito:</span>
                           <span className={`font-bold ${isOutOfStock ? 'text-red-500' : isLowStock ? 'text-amber-600' : 'text-slate-700'}`}>

@@ -18,34 +18,78 @@ import type {
 
 // ─── Catálogo de Produtos ─────────────────────────────────────────────────────
 
+// Helper de persistência local de imagens (cache de fotos de produtos)
+// Garante exibição imediata e permanente das fotos mesmo se a coluna no Supabase ainda não estiver migrationada
+function getLocalImageMap(): Record<string, string> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem('insumosync_product_images');
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLocalProductImage(productId: string, imageUrl: string | null) {
+  if (typeof window === 'undefined' || !productId) return;
+  try {
+    const map = getLocalImageMap();
+    if (imageUrl) {
+      map[productId] = imageUrl;
+    } else {
+      delete map[productId];
+    }
+    localStorage.setItem('insumosync_product_images', JSON.stringify(map));
+  } catch (err) {
+    console.warn('Falha ao salvar imagem no cache local:', err);
+  }
+}
+
+function applyLocalImages(products: Product[]): Product[] {
+  const map = getLocalImageMap();
+  return products.map((p) => {
+    const localUrl = map[p.id];
+    return {
+      ...p,
+      image_url: p.image_url || localUrl || null,
+    };
+  });
+}
+
 export async function fetchProducts(includeInactive = false): Promise<Product[]> {
+  let list: Product[] = [];
+
   if (!isSupabaseConfigured) {
-    return mockStore.getProducts(includeInactive);
+    list = mockStore.getProducts(includeInactive);
+  } else {
+    let query = supabase
+      .from('products')
+      .select('*')
+      .order('category')
+      .order('name');
+
+    if (!includeInactive) {
+      query = query.eq('is_active', true);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('[inventory-service] fetchProducts error:', error.message);
+      list = [];
+    } else {
+      list = (data ?? []) as Product[];
+    }
   }
 
-  let query = supabase
-    .from('products')
-    .select('*')
-    .order('category')
-    .order('name');
-
-  if (!includeInactive) {
-    query = query.eq('is_active', true);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    console.error('[inventory-service] fetchProducts error:', error.message);
-    return [];
-  }
-
-  return (data ?? []) as Product[];
+  return applyLocalImages(list);
 }
 
 export async function fetchProductById(productId: string): Promise<Product | null> {
   if (!isSupabaseConfigured) {
-    return mockStore.getProductById(productId);
+    const p = mockStore.getProductById(productId);
+    if (!p) return null;
+    return applyLocalImages([p])[0];
   }
 
   const { data, error } = await supabase
@@ -54,27 +98,30 @@ export async function fetchProductById(productId: string): Promise<Product | nul
     .eq('id', productId)
     .single();
 
-  if (error) return null;
-  return data as Product;
+  if (error || !data) return null;
+  return applyLocalImages([data as Product])[0];
 }
 
 // ─── Estoque Crítico (abaixo do mínimo) ──────────────────────────────────────
 
 export async function fetchLowStockProducts(): Promise<Product[]> {
+  let list: Product[] = [];
   if (!isSupabaseConfigured) {
-    return mockStore.getProducts(false).filter((p) => p.current_stock <= p.min_stock_alert);
+    list = mockStore.getProducts(false).filter((p) => p.current_stock <= p.min_stock_alert);
+  } else {
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .eq('is_active', true)
+      .order('current_stock');
+
+    if (error) return [];
+    list = ((data ?? []) as Product[]).filter(
+      (p) => p.current_stock <= p.min_stock_alert
+    );
   }
 
-  const { data, error } = await supabase
-    .from('products')
-    .select('*')
-    .eq('is_active', true)
-    .order('current_stock');
-
-  if (error) return [];
-  return ((data ?? []) as Product[]).filter(
-    (p) => p.current_stock <= p.min_stock_alert
-  );
+  return applyLocalImages(list);
 }
 
 // ─── Reabastecimento de Produto (operador do depósito) ───────────────────────
@@ -134,25 +181,181 @@ export async function restockProduct(params: RestockParams): Promise<RestockResu
 export async function createOrUpdateProduct(
   payload: ProductUpsertPayload
 ): Promise<ProductUpsertResponse> {
-  if (!isSupabaseConfigured) {
-    return mockStore.upsertProduct(payload);
+  // Salva no cache local de imagens imediatamente se a URL da foto foi definida ou removida
+  if (payload.id && payload.image_url !== undefined) {
+    saveLocalProductImage(payload.id, payload.image_url === '' ? null : payload.image_url);
   }
 
+  if (!isSupabaseConfigured) {
+    const res = mockStore.upsertProduct(payload);
+    if (res.success && res.product_id && payload.image_url) {
+      saveLocalProductImage(res.product_id, payload.image_url);
+    }
+    return res;
+  }
+
+  // 1. Tenta executar via Stored Procedure RPC
   const { data, error } = await supabase.rpc('create_or_update_product', {
     p_id:               payload.id ?? null,
     p_name:             payload.name,
     p_category:         payload.category,
     p_unit:             payload.unit,
-    p_current_stock:    payload.id ? 0 : payload.current_stock, // stock só na criação
+    p_current_stock:    payload.id ? 0 : payload.current_stock,
     p_min_stock_alert:  payload.min_stock_alert,
+    p_image_url:        payload.image_url ?? null,
   });
 
-  if (error) {
-    return { success: false, error: `Erro ao salvar produto: ${error.message}` };
+  if (!error && data) {
+    const res = data as ProductUpsertResponse;
+    if (res.success && res.product_id && payload.image_url) {
+      saveLocalProductImage(res.product_id, payload.image_url);
+    }
+    return res;
   }
 
-  const result = data as ProductUpsertResponse;
-  return result;
+  // 2. Fallback resiliente: se a RPC de 7 parâmetros ainda não estiver no schema cache do Supabase, executa via CRUD direto
+  if (error) {
+    console.warn('[inventory-service] RPC create_or_update_product indisponível no cache. Executando via tabela:', error.message);
+
+    if (payload.id) {
+      // EDITAR
+      const updatePayload: Record<string, any> = {
+        name: payload.name,
+        category: payload.category,
+        unit: payload.unit,
+        min_stock_alert: payload.min_stock_alert,
+      };
+
+      if (payload.image_url !== undefined) {
+        updatePayload.image_url = payload.image_url === '' ? null : payload.image_url;
+      }
+
+      const { error: updateErr } = await supabase
+        .from('products')
+        .update(updatePayload)
+        .eq('id', payload.id);
+
+      if (updateErr) {
+        // Se a coluna image_url não existir ainda no banco remoto, salva no cache local e atualiza outros campos no Supabase
+        if (updateErr.message.includes('image_url') || updateErr.code === 'PGRST204') {
+          delete updatePayload.image_url;
+          const { error: retryErr } = await supabase
+            .from('products')
+            .update(updatePayload)
+            .eq('id', payload.id);
+
+          if (retryErr) return { success: false, error: `Erro ao atualizar produto: ${retryErr.message}` };
+          return { success: true, product_id: payload.id, action: 'updated' };
+        }
+        return { success: false, error: `Erro ao atualizar produto: ${updateErr.message}` };
+      }
+
+      return { success: true, product_id: payload.id, action: 'updated' };
+    } else {
+      // CRIAR
+      const insertPayload: Record<string, any> = {
+        name: payload.name,
+        category: payload.category,
+        unit: payload.unit,
+        current_stock: payload.current_stock ?? 0,
+        min_stock_alert: payload.min_stock_alert,
+        is_active: true,
+      };
+
+      if (payload.image_url) {
+        insertPayload.image_url = payload.image_url;
+      }
+
+      const { data: insertRes, error: insertErr } = await supabase
+        .from('products')
+        .insert(insertPayload)
+        .select()
+        .single();
+
+      const createdId = insertRes?.id ?? '';
+      if (createdId && payload.image_url) {
+        saveLocalProductImage(createdId, payload.image_url);
+      }
+
+      if (insertErr) {
+        if (insertErr.message.includes('image_url')) {
+          delete insertPayload.image_url;
+          const { data: retryRes, error: retryErr } = await supabase
+            .from('products')
+            .insert(insertPayload)
+            .select()
+            .single();
+
+          if (retryErr) return { success: false, error: `Erro ao criar produto: ${retryErr.message}` };
+          const retryId = retryRes?.id ?? '';
+          if (retryId && payload.image_url) {
+            saveLocalProductImage(retryId, payload.image_url);
+          }
+          return { success: true, product_id: retryId, action: 'created' };
+        }
+        return { success: false, error: `Erro ao criar produto: ${insertErr.message}` };
+      }
+
+      if (payload.current_stock > 0 && createdId) {
+        await supabase.from('stock_movements').insert({
+          product_id: createdId,
+          type: 'ENTRADA_MANUAL',
+          quantity: payload.current_stock,
+          reason: 'Estoque inicial no cadastro do produto',
+        });
+      }
+
+      return { success: true, product_id: createdId, action: 'created' };
+    }
+  }
+
+  return { success: false, error: 'Falha ao processar insumo.' };
+}
+
+// ─── Upload de Imagem de Produto ─────────────────────────────────────────────
+
+export async function uploadProductImage(
+  blob: Blob,
+  fileNamePrefix = 'product'
+): Promise<{ success: boolean; url?: string; error?: string }> {
+  try {
+    // Sempre converte para DataURL WebP super otimizada para cache instantâneo e garantido
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('Falha ao converter imagem'));
+      reader.readAsDataURL(blob);
+    });
+
+    if (!isSupabaseConfigured) {
+      return { success: true, url: dataUrl };
+    }
+
+    // Tenta upload no Supabase Storage se a infraestrutura estiver disponível
+    const ext = blob.type.includes('webp') ? 'webp' : 'jpg';
+    const filePath = `${fileNamePrefix}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('product-images')
+      .upload(filePath, blob, {
+        contentType: blob.type || 'image/webp',
+        upsert: true,
+      });
+
+    if (uploadError) {
+      console.warn('[inventory-service] Storage upload fallback para DataURL:', uploadError.message);
+      return { success: true, url: dataUrl };
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from('product-images')
+      .getPublicUrl(filePath);
+
+    return { success: true, url: publicUrlData.publicUrl || dataUrl };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Erro ao processar imagem';
+    return { success: false, error: msg };
+  }
 }
 
 // ─── Desativar Produto (Soft-delete) ─────────────────────────────────────────

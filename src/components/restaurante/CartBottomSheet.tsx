@@ -6,6 +6,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, ShoppingBag, Send, Minus, Plus, AlertCircle, Loader2 } from 'lucide-react';
 import type { Product } from '@/types/database';
+import { ProductThumbnail } from '@/components/ui/ProductThumbnail';
 
 export interface CartItem {
   product: Product;
@@ -103,16 +104,24 @@ export function CartBottomSheet({
                 key={product.id}
                 className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-100"
               >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-slate-900 truncate">{product.name}</p>
-                  <p className="text-xs text-slate-500">
-                    Disponível: <span className="font-medium text-slate-700">{product.current_stock} {product.unit}</span>
-                  </p>
-                  {isAtMax && (
-                    <p className="text-[11px] text-amber-600 flex items-center gap-1 mt-0.5">
-                      <AlertCircle className="w-3 h-3" /> Máximo disponível atingido
+                <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                  <ProductThumbnail
+                    imageUrl={product.image_url}
+                    name={product.name}
+                    category={product.category}
+                    size="sm"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 truncate">{product.name}</p>
+                    <p className="text-xs text-slate-500">
+                      Disponível: <span className="font-medium text-slate-700">{product.current_stock} {product.unit}</span>
                     </p>
-                  )}
+                    {isAtMax && (
+                      <p className="text-[11px] text-amber-600 flex items-center gap-1 mt-0.5">
+                        <AlertCircle className="w-3 h-3" /> Máximo disponível atingido
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 {/* Qty controls */}
