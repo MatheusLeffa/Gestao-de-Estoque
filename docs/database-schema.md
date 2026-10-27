@@ -313,6 +313,7 @@ As implementações das 12 RPCs foram movidas, **sem alteração de corpo**, par
    FROM auth.users WHERE email = '<email do usuário>';
    ```
    Para `estoque` e `admin`, `restaurant_id` pode ser `NULL`.
+   **Usuário de demonstração:** um perfil `admin` com `full_name = 'Demonstração'` e `restaurant_id` nulo. Ele navega pelas três áreas pelo `AppNav`, como o antigo `DemoSwitcher`, e suas credenciais são repassadas fora do repositório a quem for avaliar o projeto.
 3. **Authentication → Sign In / Providers → Email**: desativar **Allow new users to sign up**.
 4. **Authentication → URL Configuration**: *Site URL* = `https://insumosync.vercel.app`.
 5. Para bloquear alguém: `UPDATE public.profiles SET is_active = false WHERE id = ...`. Para redefinir a senha: Dashboard → Users → usuário → *Reset password* ou editar a senha.
