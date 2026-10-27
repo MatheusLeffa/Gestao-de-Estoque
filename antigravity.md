@@ -13,7 +13,7 @@
 - **Slogan:** *Sincronia em tempo real entre o estoque central e a sua cozinha.*
 - **Escopo do MVP (Trabalho Acadêmico):** 1 Estoque Central (Depósito), 1 Restaurante (Filial) e 1 Painel de Administrador Geral (Analytics).
 - **Arquitetura & Infraestrutura (Free-Tier Compliance):**
-  - **Front-end / App:** Vercel (Next.js App Router com TypeScript).
+  - **Front-end / App:** Vercel, projeto `insumo-sync`, produção em `https://insumosync.vercel.app` (Next.js App Router com TypeScript).
   - **Back-end & Banco:** Supabase (PostgreSQL, Row Level Security e Supabase Realtime).
   - **Estilização & UI:** Tailwind CSS, Lucide Icons e Shadcn UI.
 - **Autenticação & Acesso:**
