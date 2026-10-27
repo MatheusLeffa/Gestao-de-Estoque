@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
-import { DemoProvider } from '@/contexts/DemoContext';
-import { DemoSwitcher } from '@/components/DemoSwitcher';
+import { AuthProvider } from '@/contexts/AuthContext';
+import { AuthGate } from '@/components/AuthGate';
 
 export const metadata: Metadata = {
   title: 'InsumoSync — Gestão Inteligente de Estoque para Restaurantes',
@@ -24,12 +24,9 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body className="min-h-screen bg-slate-50 text-slate-900 antialiased flex flex-col font-sans">
-        <DemoProvider>
-          <DemoSwitcher />
-          <main className="flex-1 w-full max-w-7xl mx-auto flex flex-col">
-            {children}
-          </main>
-        </DemoProvider>
+        <AuthProvider>
+          <AuthGate>{children}</AuthGate>
+        </AuthProvider>
       </body>
     </html>
   );

@@ -4,8 +4,14 @@
     {
       "name": "insumosync-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "port": 3000
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 3000,
+      "env": {
+        "NEXT_DIST_DIR": ".next-preview"
+      }
     }
   ]
 }

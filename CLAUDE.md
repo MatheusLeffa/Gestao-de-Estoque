@@ -55,6 +55,8 @@ Os 16 guard rails vivem no `antigravity.md`. Os que mais reprovam trabalho aqui:
   Sheets no lugar de modais centrais, `overflow-x: hidden` no container raiz.
 - **Living blueprint sincronizado.** Mudou regra de negócio? O `antigravity.md` e o
   módulo correspondente em `docs/` são atualizados **antes** do código.
+- **Autorização no banco.** Toda RPC exposta começa com `auth_guard(ARRAY[...])` e
+  fixa `SET search_path = public`; tabela de negócio não tem policy de escrita.
 - **Plano antes de mudança estrutural.** `implementation_plan.md` apresentado e
   aprovado antes de mexer em schema, RPC ou máquina de estados.
 

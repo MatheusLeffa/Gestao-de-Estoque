@@ -64,3 +64,21 @@ stateDiagram-v2
 
 3. **Transições Automáticas do Sistema:**
    - Ao inativar um insumo no catálogo com força, todo pedido `ABERTO`/`EM_ANALISE` que ficar sem nenhum item vai automaticamente para `CANCELADO`, com o motivo registrado. É a única transição que o sistema dispara sem ação direta de uma persona.
+
+---
+
+## 4. Quem Pode Cada Transição
+
+Validado na RPC pública `transition_order_status` antes de qualquer escrita (resposta `FORBIDDEN` quando o papel não pode).
+
+| De | Para | `restaurante` (só pedido do próprio restaurante) | `estoque` | `admin` |
+| :--- | :--- | :---: | :---: | :---: |
+| `ABERTO` | `EM_ANALISE` | ❌ | ✅ | ✅ |
+| `ABERTO` | `CANCELADO` | ✅ | ✅ | ✅ |
+| `EM_ANALISE` / `EM_ATRASO` | `CANCELAMENTO_PENDENTE` | ✅ | ❌ | ✅ |
+| `EM_ANALISE` / `EM_ATRASO` | `EM_TRANSITO`, `EM_ATRASO`, `EM_ANALISE`, `CANCELADO` | ❌ | ✅ | ✅ |
+| `CANCELAMENTO_PENDENTE` | `CANCELADO` / `EM_ANALISE` | ❌ | ✅ | ✅ |
+| `EM_TRANSITO` | `EM_ATRASO`, `CANCELADO` | ❌ | ✅ | ✅ |
+| `EM_TRANSITO` | `CONCLUIDO_TOTAL`, `CONCLUIDO_PARCIAL`, `CONCLUIDO_NAO_ENTREGUE` | ✅ | ❌ | ✅ |
+
+Em resumo: o `estoque` não conclui entregas nem pede cancelamento; o `restaurante` só cancela o próprio pedido aberto, pede cancelamento e confere a entrega. O cancelamento automático por inativação de insumo roda com o papel de quem inativou (`estoque` ou `admin`).

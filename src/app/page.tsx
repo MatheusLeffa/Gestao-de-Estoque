@@ -1,7 +1,7 @@
-// InsumoSync: Root Page Redirector
+// InsumoSync: Root Page
 // Author: frontend-engineer
-import { redirect } from 'next/navigation';
+// O AuthGate redireciona `/` para /login ou para a rota do papel do usuário.
 
 export default function HomePage() {
-  redirect('/estoque');
+  return null;
 }

@@ -39,6 +39,9 @@ Projeto Supabase: `InsumoSync_v2` (`iwcbvcubxjeghpxrqojo`). **Só existe produç
    no mesmo commit. `execute_sql` serve para leitura e verificação, não para DDL.
 10. DDL destrutiva (`DROP`, `DELETE` em massa, alteração de tipo) exige confirmação
     explícita do usuário antes de aplicar.
+11. Toda RPC exposta ao cliente começa com `v_err := public.auth_guard(ARRAY[...]);`
+    e fixa `SET search_path = public`. Tabela de negócio não recebe policy de escrita:
+    escrita só por RPC `SECURITY DEFINER`.
 
 ## Ao terminar
 - Rode a query de invariante do `CLAUDE.md` antes e depois de qualquer mudança que

@@ -7,6 +7,7 @@
 
 import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { mockStore } from '@/lib/services/mock-store';
+import { guardRpcResponse } from '@/lib/services/auth-service';
 import type { AdminAnalyticsResponse } from '@/types/database';
 
 export async function fetchAdminAnalytics(): Promise<AdminAnalyticsResponse> {
@@ -20,7 +21,7 @@ export async function fetchAdminAnalytics(): Promise<AdminAnalyticsResponse> {
     return { success: false, error: `Erro ao carregar indicadores: ${error.message}` };
   }
 
-  return data as AdminAnalyticsResponse;
+  return guardRpcResponse(data as AdminAnalyticsResponse);
 }
 
 // ─── Formatação para exibição ────────────────────────────────────────────────

@@ -55,12 +55,13 @@ Este documento detalha a experiência de uso, layout Mobile-First, componentes t
 
 ---
 
-## 🎭 3. Modo Demonstração (Demo Switcher)
-- Componente fixo no topo (`DemoSwitcher`) com 3 abas estilizadas:
-  - `[📦 Estoque]` ➔ Navega para `/estoque`
-  - `[🍽️ Restaurante]` ➔ Navega para `/restaurante`
-  - `[👑 Administrador]` ➔ Navega para `/admin`
-- Salva a preferência no `localStorage` e no `DemoContext` para persistência entre recarregamentos.
+## 🔐 3. Login e Navegação por Papel
+- **Tela `/login`:** e-mail e senha, botão de mostrar/ocultar senha, estado de carregamento e mensagem de erro em português. Campos e botão com 44px de altura mínima. Sem link de cadastro; abaixo do botão, o aviso "Esqueceu a senha? Peça ao administrador para redefinir". Com sessão ativa, redireciona para a rota do papel.
+- **`AuthGate`:** envolve todo o app. Enquanto a sessão carrega, mostra um splash (nada da área protegida pisca na tela). Sem sessão → `/login`; perfil inativo ou ausente → desconecta e mostra o aviso no login; rota fora do papel → rota do próprio papel. `/` redireciona para a rota do papel.
+- **`AppNav`** (barra fixa no topo, substitui o `DemoSwitcher`):
+  - abas só das áreas que o papel permite (`admin` vê as três; os demais, só a própria aba, exibida como rótulo);
+  - primeiro nome do usuário, controle do som (preferência do aparelho, em `localStorage`) e botão **Sair** (44px).
+- Os canais Realtime só existem dentro de telas autenticadas e são fechados no logout.
 
 ---
 

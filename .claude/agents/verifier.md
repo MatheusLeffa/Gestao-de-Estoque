@@ -30,7 +30,7 @@ npm run build                    # 0 erros
 5. **Documentação.** A regra implementada aparece em `antigravity.md` e no módulo de
    `docs/` correspondente, e a doc descreve o que **está** implementado.
 6. **Mobile-first.** Em mudança de tela, confira alvos de 44px, Bottom Sheet e
-   `DemoSwitcher` presente.
+   `AppNav` presente nas telas autenticadas.
 
 ## Limites
 - `execute_sql` é **somente SELECT**. O banco é de produção; qualquer DML ou DDL é proibido.

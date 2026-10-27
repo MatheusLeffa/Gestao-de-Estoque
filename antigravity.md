@@ -17,8 +17,9 @@
   - **Back-end & Banco:** Supabase (PostgreSQL, Row Level Security e Supabase Realtime).
   - **Estilização & UI:** Tailwind CSS, Lucide Icons e Shadcn UI.
 - **Autenticação & Acesso:**
-  - Inicialmente via **Email/Usuário e Senha (Supabase Auth)** sem 2FA (Two-Factor Authentication) para garantir agilidade no MVP.
-  - Convivência com o **Demo Switcher** para alternância instantânea entre as 3 personas durante testes e demonstrações acadêmicas.
+  - Login por **e-mail e senha (Supabase Auth)**, sem 2FA, sem cadastro aberto e sem recuperação de senha por e-mail. Usuários são criados manualmente pelo administrador do sistema (ver [`docs/database-schema.md`](docs/database-schema.md) seção 4).
+  - Cada usuário tem **um papel** em `profiles` (`estoque`, `restaurante` ou `admin`). O `admin` navega pelas três áreas; os demais veem só a própria. O antigo `DemoSwitcher` de troca livre de persona foi aposentado.
+  - A autorização vale **no banco**: RLS por papel nas tabelas e `auth_guard` no início de toda RPC. Bloquear a rota no cliente é conveniência, não segurança.
 
 ### 📚 Índice de Documentação Modular (Hub & Spoke)
 - [business-rules.md](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/docs/business-rules.md) — Regras de negócio, cálculos de estoque e políticas de cancelamento.
@@ -59,7 +60,7 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
 13. **Comunicação Objetiva:** Respostas diretas em português com links clicáveis para os arquivos.
 14. **Planejamento Prévio:** Apresentação obrigatória do `implementation_plan.md` antes de alterações estruturais.
 15. **Delegação por Especialidade:** O Tech Lead delega aos subagentes do [`AGENTS.md`](AGENTS.md) tarefas autocontidas do domínio deles, trabalho paralelo independente e a verificação final (`verifier`). Ajustes pequenos são feitos direto, sob as mesmas regras.
-16. **Disponibilidade do Modo Demo:** O `DemoSwitcher` deve permanecer funcional e acessível em todas as telas para facilitar a demonstração acadêmica.
+16. **Autorização no Banco, não na Tela:** Nenhum dado de negócio é acessível sem sessão. Toda tabela tem RLS por papel (`current_app_role()`), nenhuma tabela de negócio aceita escrita direta do cliente, e **toda RPC nova começa com `auth_guard`**, retornando `UNAUTHENTICATED` ou `FORBIDDEN` no padrão JSONB do projeto. A demonstração acadêmica das três áreas é feita com o usuário `admin`.
 
 ---
 
@@ -154,9 +155,12 @@ O `select` nativo é uma escolha deliberada — em mobile ele abre a roleta do p
 - A comparação de texto usa `localeCompare` em `pt-BR`, para que acentuação e maiúsculas não bagunçem a ordem alfabética.
 - No Restaurante, o mesmo critério governa os pedidos ativos e o histórico — são duas seções da mesma lista, e ordená-las de formas diferentes confundiria a leitura.
 
-### 🎭 E. Modo Demonstração (Demo Switcher)
-- Seletor fixo no topo da aplicação para alternância instantânea com 1 clique:
-  `[📦 Modo Estoque]` | `[🍽️ Modo Restaurante]` | `[👑 Modo Administrador]`
+### 🔐 E. Login e Navegação por Papel (`AppNav`)
+- Toda rota exige sessão; sem ela, o `AuthGate` leva para `/login`. Usuário sem perfil ativo é desconectado com aviso.
+- Barra fixa no topo (`AppNav`) com as abas que o papel permite, nome do usuário, controle de som e botão **Sair**:
+  - `admin`: `[📦 Estoque]` | `[🍽️ Restaurante]` | `[👑 Administrador]`
+  - `estoque`: só `/estoque`; `restaurante`: só `/restaurante`. Rota fora do papel redireciona para a rota do próprio papel.
+- Matriz completa de permissões em [`docs/business-rules.md`](docs/business-rules.md) seção 9.
 
 ---
 
@@ -241,7 +245,7 @@ O índice dos subagentes vive no [`AGENTS.md`](AGENTS.md). A definição complet
 2. 📱 **`frontend-engineer` (tudo que roda no navegador)**:
    - Next.js App Router, React Server/Client Components, React Hooks e Context API.
    - Services em `src/lib/services/` consumindo RPCs e subscrições Realtime.
-   - UI mobile-first (360–420px, alvos ≥ 44×44px, Bottom Sheets, `overflow-x: hidden`) com Tailwind, Lucide e primitivos no estilo Shadcn; gráficos Recharts; áudio chime; `DemoSwitcher`.
+   - UI mobile-first (360–420px, alvos ≥ 44×44px, Bottom Sheets, `overflow-x: hidden`) com Tailwind, Lucide e primitivos no estilo Shadcn; gráficos Recharts; áudio chime; login, `AuthGate` e `AppNav`.
 
 3. 🧪 **`verifier` (verificação independente, somente leitura)**:
    - `node scripts/security-audit.mjs`, `npx tsc --noEmit` e `npm run build`.
@@ -295,6 +299,11 @@ O índice dos subagentes vive no [`AGENTS.md`](AGENTS.md). A definição complet
 - [x] **Fase 5.6: Imagens nos Produtos, Recorte Nativo 1:1 & Portal de Modais**
   - Cadastro e edição de foto do insumo no Depósito (`ProductFormModal`), componente nativo de recorte 1:1 sem dependências externas (`ImageCropModal`), renderização de miniaturas temáticas (`ProductThumbnail`), suporte a Supabase Storage com fallback resiliente para cache local de imagens WebP DataURL, e componente `ModalPortal` para renderizar modais diretamente no `document.body` garantindo isolamento de stacking contexts e travamento de scroll limpo.
   - *Agentes:* `frontend-engineer` + `ui-ux-designer` + `db-engineer`.
+
+- [ ] **Fase 5.7: Login, Perfis e RLS por Papel**
+  - Supabase Auth com e-mail e senha, tabela `profiles` com papel e restaurante, tela `/login`, `AuthContext`, `AuthGate` e `AppNav` no lugar do `DemoSwitcher` livre. Remoção das escritas diretas de contingência no `inventory-service`.
+  - Rollout em duas fases: Migration A (`profiles` e funções auxiliares) e front no ar primeiro; Migration B (RLS por papel e `auth_guard` nas RPCs) só depois do teste com os três papéis em produção.
+  - *Agentes:* Tech Lead + `db-engineer` + `frontend-engineer` + `verifier`.
 
 - [ ] **Fase 6: Testes de QA, Concorrência, Versionamento & Deploy na Vercel**
   - Testes de concorrência simultânea, validação em viewports mobile, esteira de verificação/build e checklist de deploy na Vercel.

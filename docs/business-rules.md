@@ -259,4 +259,37 @@ Avaliados nesta ordem:
 - **Badges nos Cards:** Indicação visual em cada insumo com botão de adição rápida `[+ Sugerido]`.
 - **Bottom Sheet de Previsão (`RestaurantForecastModal`):** Permite inspecionar a justificativa de cada sugestão, ajustar quantidades individualmente ou adicionar o lote completo com 1 toque.
 
+---
 
+## 9. Autenticação, Papéis e Permissões
+
+### 9.1 Acesso
+- Só entra quem tem usuário no Supabase Auth **e** linha ativa em `profiles`. Não existe cadastro aberto (*sign-up* desativado no projeto), login social, 2FA nem recuperação de senha por e-mail: quem esqueceu a senha pede ao administrador para redefini-la.
+- Cada usuário tem exatamente um papel: `estoque`, `restaurante` ou `admin`. O `restaurante` pertence a um único `restaurant_id` (obrigatório no perfil). O `admin` pode ter `restaurant_id` vazio; nesse caso, a área `/restaurante` opera o primeiro restaurante ativo.
+- `is_active = false` em `profiles` bloqueia o usuário por completo, mesmo com senha válida.
+- **Demonstração acadêmica:** feita com um usuário `admin` chamado *Demonstração*, que alterna entre as três áreas com um toque. Não existe acesso sem login: a senha da demo nunca vai para o código nem para variável `NEXT_PUBLIC_*`, porque isso reabriria o banco de produção a qualquer pessoa com a URL.
+- Usuários e perfis são criados **manualmente** pelo administrador do sistema (Dashboard do Supabase + `INSERT` em `profiles`). Nenhuma credencial é versionada.
+
+### 9.2 Matriz de permissões
+A regra vale **no banco** (RLS e `auth_guard` nas RPCs); a tela apenas a reflete.
+
+| Recurso | `estoque` | `restaurante` | `admin` |
+| :--- | :---: | :---: | :---: |
+| Ler `products` (catálogo) | ✅ | ✅ | ✅ |
+| Ler `restaurants` | todos | só o próprio | todos |
+| Ler `orders`, `order_items`, `order_status_logs` | todos | só do próprio restaurante | todos |
+| Ler `stock_movements` | ✅ | ❌ | ✅ |
+| `place_order_with_reservation`, `get_restaurant_recommendations` | ❌ | só para o próprio restaurante | ✅ |
+| `transition_order_status` | transições do depósito | transições do restaurante, só em pedido próprio | ✅ |
+| `apply_order_triage` | ✅ | ❌ | ✅ |
+| `restock_product`, `create_or_update_product`, `deactivate_product`, `reactivate_product`, `delete_product`, `check_product_usage` | ✅ | ❌ | ✅ |
+| `get_stock_forecasting` | ✅ | ❌ | ✅ |
+| `get_admin_analytics` | ❌ | ❌ | ✅ |
+| Enviar foto ao bucket `product-images` | ✅ | ❌ | ✅ |
+| Escrita direta (`INSERT`/`UPDATE`/`DELETE`) em qualquer tabela de negócio | ❌ | ❌ | ❌ |
+
+Quem pode cada transição de status está em [`state-machine.md`](state-machine.md) seção 4.
+
+### 9.3 Respostas de negação
+- Sem sessão: `{ success: false, code: 'UNAUTHENTICATED' }`. O cliente encerra a sessão local e volta para `/login`.
+- Papel sem permissão, perfil inativo ou recurso de outro restaurante: `{ success: false, code: 'FORBIDDEN' }`. O cliente mostra a mensagem sem quebrar a tela.

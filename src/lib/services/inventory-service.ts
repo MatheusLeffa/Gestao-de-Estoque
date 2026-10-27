@@ -3,6 +3,7 @@
 
 import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { mockStore } from '@/lib/services/mock-store';
+import { guardRpcResponse } from '@/lib/services/auth-service';
 import type {
   Product,
   RestockProductResponse,
@@ -164,7 +165,7 @@ export async function restockProduct(params: RestockParams): Promise<RestockResu
     return { success: false, error: `Erro ao reabastecer: ${error.message}` };
   }
 
-  const result = data as RestockProductResponse;
+  const result = guardRpcResponse(data as RestockProductResponse);
   if (!result.success) {
     return { success: false, error: result.error ?? 'Falha no reabastecimento.' };
   }
@@ -194,7 +195,7 @@ export async function createOrUpdateProduct(
     return res;
   }
 
-  // 1. Tenta executar via Stored Procedure RPC
+  // Toda escrita em products e stock_movements passa pela RPC atômica (Guard Rail #7).
   const { data, error } = await supabase.rpc('create_or_update_product', {
     p_id:               payload.id ?? null,
     p_name:             payload.name,
@@ -205,111 +206,15 @@ export async function createOrUpdateProduct(
     p_image_url:        payload.image_url ?? null,
   });
 
-  if (!error && data) {
-    const res = data as ProductUpsertResponse;
-    if (res.success && res.product_id && payload.image_url) {
-      saveLocalProductImage(res.product_id, payload.image_url);
-    }
-    return res;
+  if (error || !data) {
+    return { success: false, error: `Erro ao salvar insumo: ${error?.message ?? 'resposta vazia do servidor.'}` };
   }
 
-  // 2. Fallback resiliente: se a RPC de 7 parâmetros ainda não estiver no schema cache do Supabase, executa via CRUD direto
-  if (error) {
-    console.warn('[inventory-service] RPC create_or_update_product indisponível no cache. Executando via tabela:', error.message);
-
-    if (payload.id) {
-      // EDITAR
-      const updatePayload: Record<string, any> = {
-        name: payload.name,
-        category: payload.category,
-        unit: payload.unit,
-        min_stock_alert: payload.min_stock_alert,
-      };
-
-      if (payload.image_url !== undefined) {
-        updatePayload.image_url = payload.image_url === '' ? null : payload.image_url;
-      }
-
-      const { error: updateErr } = await supabase
-        .from('products')
-        .update(updatePayload)
-        .eq('id', payload.id);
-
-      if (updateErr) {
-        // Se a coluna image_url não existir ainda no banco remoto, salva no cache local e atualiza outros campos no Supabase
-        if (updateErr.message.includes('image_url') || updateErr.code === 'PGRST204') {
-          delete updatePayload.image_url;
-          const { error: retryErr } = await supabase
-            .from('products')
-            .update(updatePayload)
-            .eq('id', payload.id);
-
-          if (retryErr) return { success: false, error: `Erro ao atualizar produto: ${retryErr.message}` };
-          return { success: true, product_id: payload.id, action: 'updated' };
-        }
-        return { success: false, error: `Erro ao atualizar produto: ${updateErr.message}` };
-      }
-
-      return { success: true, product_id: payload.id, action: 'updated' };
-    } else {
-      // CRIAR
-      const insertPayload: Record<string, any> = {
-        name: payload.name,
-        category: payload.category,
-        unit: payload.unit,
-        current_stock: payload.current_stock ?? 0,
-        min_stock_alert: payload.min_stock_alert,
-        is_active: true,
-      };
-
-      if (payload.image_url) {
-        insertPayload.image_url = payload.image_url;
-      }
-
-      const { data: insertRes, error: insertErr } = await supabase
-        .from('products')
-        .insert(insertPayload)
-        .select()
-        .single();
-
-      const createdId = insertRes?.id ?? '';
-      if (createdId && payload.image_url) {
-        saveLocalProductImage(createdId, payload.image_url);
-      }
-
-      if (insertErr) {
-        if (insertErr.message.includes('image_url')) {
-          delete insertPayload.image_url;
-          const { data: retryRes, error: retryErr } = await supabase
-            .from('products')
-            .insert(insertPayload)
-            .select()
-            .single();
-
-          if (retryErr) return { success: false, error: `Erro ao criar produto: ${retryErr.message}` };
-          const retryId = retryRes?.id ?? '';
-          if (retryId && payload.image_url) {
-            saveLocalProductImage(retryId, payload.image_url);
-          }
-          return { success: true, product_id: retryId, action: 'created' };
-        }
-        return { success: false, error: `Erro ao criar produto: ${insertErr.message}` };
-      }
-
-      if (payload.current_stock > 0 && createdId) {
-        await supabase.from('stock_movements').insert({
-          product_id: createdId,
-          type: 'ENTRADA_MANUAL',
-          quantity: payload.current_stock,
-          reason: 'Estoque inicial no cadastro do produto',
-        });
-      }
-
-      return { success: true, product_id: createdId, action: 'created' };
-    }
+  const res = guardRpcResponse(data as ProductUpsertResponse);
+  if (res.success && res.product_id && payload.image_url) {
+    saveLocalProductImage(res.product_id, payload.image_url);
   }
-
-  return { success: false, error: 'Falha ao processar insumo.' };
+  return res;
 }
 
 // ─── Upload de Imagem de Produto ─────────────────────────────────────────────
@@ -377,7 +282,7 @@ export async function deactivateProduct(
     return { success: false, error: `Erro ao desativar produto: ${error.message}` };
   }
 
-  return data as DeactivateProductResponse;
+  return guardRpcResponse(data as DeactivateProductResponse);
 }
 
 // ─── Reativar Produto ─────────────────────────────────────────────────────────
@@ -402,7 +307,7 @@ export async function reactivateProduct(
     return { success: false, error: `Erro ao reativar produto: ${error.message}` };
   }
 
-  return data as { success: boolean; error?: string };
+  return guardRpcResponse(data as { success: boolean; code?: string; error?: string });
 }
 
 // ─── Uso do Produto (fonte de verdade server-side para a UI) ─────────────────
@@ -427,7 +332,7 @@ export async function checkProductUsage(
     return { success: false, error: `Erro ao verificar uso do produto: ${error.message}` };
   }
 
-  return data as ProductUsageResponse;
+  return guardRpcResponse(data as ProductUsageResponse);
 }
 
 // ─── Deletar Produto (remoção definitiva) ────────────────────────────────────
@@ -452,7 +357,7 @@ export async function deleteProduct(
     return { success: false, error: `Erro ao remover produto: ${error.message}` };
   }
 
-  return data as DeleteProductResponse;
+  return guardRpcResponse(data as DeleteProductResponse);
 }
 
 // ─── Categorias únicas do catálogo ───────────────────────────────────────────
@@ -497,7 +402,7 @@ export async function fetchStockForecasting(
     };
   }
 
-  return data as StockForecastingResponse;
+  return guardRpcResponse(data as StockForecastingResponse);
 }
 
 export function getUrgencyBadgeConfig(urgency: ForecastUrgency): {
