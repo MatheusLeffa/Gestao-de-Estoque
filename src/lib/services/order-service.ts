@@ -4,6 +4,7 @@
 
 import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { mockStore } from '@/lib/services/mock-store';
+import { guardRpcResponse } from '@/lib/services/auth-service';
 import type {
   Order,
   OrderStatus,
@@ -69,7 +70,7 @@ export async function placeOrder(params: PlaceOrderParams): Promise<PlaceOrderRe
     return { success: false, error: `Erro ao processar pedido: ${error.message}` };
   }
 
-  const result = data as PlaceOrderResponse;
+  const result = guardRpcResponse(data as PlaceOrderResponse);
 
   if (!result.success) {
     return {
@@ -167,7 +168,7 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
     return { success: false, error: `Erro na transição: ${error.message}` };
   }
 
-  const result = data as TransitionOrderStatusResponse;
+  const result = guardRpcResponse(data as TransitionOrderStatusResponse);
   if (!result.success) {
     return { success: false, error: result.error ?? 'Transição recusada pelo servidor.' };
   }
@@ -283,7 +284,7 @@ export async function updateApprovedItems(
     return { success: false, error: `Erro ao aplicar a triagem: ${error.message}` };
   }
 
-  return data as ApplyTriageResponse;
+  return guardRpcResponse(data as ApplyTriageResponse);
 }
 
 // ─── Aprovação de Cancelamento Solicitado pelo Restaurante ───────────────────
@@ -344,6 +345,6 @@ export async function fetchRestaurantRecommendations(
     };
   }
 
-  return data as RestaurantRecommendationsResponse;
+  return guardRpcResponse(data as RestaurantRecommendationsResponse);
 }
 

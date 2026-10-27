@@ -132,6 +132,23 @@ export interface RestockProductResponse {
 
 export type PersonaType = 'estoque' | 'restaurante' | 'admin';
 
+// ─── Autenticação & Perfis ───────────────────────────────────────────────────
+
+/** Papel do usuário em `profiles.role`. Coincide com as áreas do app. */
+export type AppRole = PersonaType;
+
+export interface Profile {
+  id: string;
+  role: AppRole;
+  /** Obrigatório para `restaurante`; opcional para `estoque` e `admin`. */
+  restaurant_id: string | null;
+  full_name: string;
+  is_active: boolean;
+}
+
+/** Códigos que o `auth_guard` das RPCs devolve ao negar uma chamada. */
+export type RpcAuthErrorCode = 'UNAUTHENTICATED' | 'FORBIDDEN';
+
 // ─── Product Management Payloads ─────────────────────────────────────────────
 
 export interface ProductUpsertPayload {
@@ -148,6 +165,7 @@ export interface ProductUpsertResponse {
   success: boolean;
   product_id?: string;
   action?: 'created' | 'updated';
+  code?: string;
   error?: string;
 }
 
@@ -259,6 +277,7 @@ export interface AdminAnalyticsResponse {
   outcomes?: OutcomeStat[];
   consumption?: ConsumptionStat[];
   orders_timeline?: TimelinePoint[];
+  code?: string;
   error?: string;
 }
 
@@ -302,6 +321,7 @@ export interface StockForecastingResponse {
   window_days?: number;
   summary?: StockForecastingSummary;
   items?: StockForecastItem[];
+  code?: string;
   error?: string;
 }
 
@@ -334,6 +354,7 @@ export interface RestaurantRecommendationsResponse {
   restaurant_id?: string;
   summary?: RestaurantRecommendationsSummary;
   items?: RestaurantRecommendationItem[];
+  code?: string;
   error?: string;
 }
 

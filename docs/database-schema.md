@@ -13,6 +13,16 @@ erDiagram
     orders ||--o{ order_items : "possui"
     orders ||--o{ order_status_logs : "registra histórico"
     products ||--o{ stock_movements : "rastreia"
+    restaurants ||--o{ profiles : "emprega"
+
+    profiles {
+        uuid id PK "= auth.users.id"
+        text role
+        uuid restaurant_id FK
+        text full_name
+        boolean is_active
+        timestamptz created_at
+    }
 
     restaurants {
         uuid id PK
@@ -151,6 +161,18 @@ erDiagram
 | `reason` | `TEXT` | `NULL` | Motivo ou número do pedido |
 | `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` | Data e hora do movimento |
 
+### 2.7 `profiles`
+| Coluna | Tipo | Restrições | Descrição |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE` | Mesmo id do usuário no Supabase Auth |
+| `role` | `TEXT` | `NOT NULL CHECK (role IN ('estoque','restaurante','admin'))` | Papel do usuário |
+| `restaurant_id` | `UUID` | `REFERENCES restaurants(id)` | Restaurante do usuário. Obrigatório quando `role = 'restaurante'` (`CHECK`) |
+| `full_name` | `TEXT` | `NOT NULL` | Nome exibido na barra de navegação |
+| `is_active` | `BOOLEAN` | `NOT NULL DEFAULT true` | `false` bloqueia o usuário por completo |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | Data de criação do perfil |
+
+> RLS: o usuário lê só a própria linha (`id = auth.uid()`). Não há policy de escrita; perfis são criados pelo administrador via SQL (seção 4.4).
+
 ---
 
 ## 3. Stored Procedures (RPCs)
@@ -232,6 +254,69 @@ erDiagram
     - Somente leitura, `SECURITY DEFINER` com `search_path = public`. Analisa o histórico de pedidos daquela unidade específica, o tempo decorrido desde o último pedido e o estoque disponível no depósito central.
     - Retorna `{ success, restaurant_id, summary, items }`, onde `summary` traz `total_recommended`, `urgent_count` e `total_suggested_units`. Cada item inclui `product_id`, `name`, `category`, `unit`, `available_stock`, `avg_daily_consumption`, `last_ordered_at`, `days_since_last_order`, `recommended_order_qty`, `urgency` (`URGENTE`, `RECOMENDADO`, `ROTINA`) e `recommendation_reason`.
 
-> **Segurança:** `get_stock_forecasting` e `get_restaurant_recommendations` fixam `search_path = public`. As demais RPCs `SECURITY DEFINER` ainda não fixam e estão sinalizadas pelo advisor do Supabase; o mesmo vale para a execução por `anon`. Tratar antes do deploy na Vercel.
+> **Segurança:** até a Migration B (seção 4.3) ser aplicada, só `get_stock_forecasting` e `get_restaurant_recommendations` fixam `search_path = public`, e todas as RPCs ainda podem ser executadas por `anon`. Esse aviso sai daqui quando a Migration B estiver no ar.
+
+---
+
+## 4. Autenticação, Autorização e RLS
+
+### 4.1 Funções auxiliares (Migration A — `20261026000000_auth_profiles.sql`)
+Todas `SECURITY DEFINER`, `STABLE`, `SET search_path = public`, executáveis só por `authenticated`.
+
+| Função | Retorno | Descrição |
+| :--- | :--- | :--- |
+| `current_app_role()` | `text` | Papel do `auth.uid()` se o perfil estiver ativo; senão `NULL` |
+| `current_restaurant_id()` | `uuid` | `restaurant_id` do perfil ativo do chamador |
+| `auth_guard(p_roles text[])` | `jsonb` | `NULL` se o chamador tem um dos papéis; senão `{ success: false, code: 'UNAUTHENTICATED' \| 'FORBIDDEN', error }` |
+
+Uso obrigatório no início de toda RPC exposta:
+
+```sql
+v_err := public.auth_guard(ARRAY['estoque','admin']);
+IF v_err IS NOT NULL THEN RETURN v_err; END IF;
+```
+
+### 4.2 RLS das tabelas (Migration B — `20261026010000_rls_by_role.sql`)
+Somente `SELECT`, somente para `authenticated`. Nenhuma tabela de negócio tem policy de `INSERT`/`UPDATE`/`DELETE`, e esses privilégios são revogados de `anon` e `authenticated`: toda escrita passa por RPC `SECURITY DEFINER`.
+
+| Tabela | Quem lê |
+| :--- | :--- |
+| `products` | qualquer perfil ativo |
+| `restaurants` | `estoque`, `admin`; `restaurante` só a própria linha |
+| `orders` | `estoque`, `admin`; `restaurante` onde `restaurant_id = current_restaurant_id()` |
+| `order_items`, `order_status_logs` | idem, pelo pedido pai |
+| `stock_movements` | `estoque`, `admin` |
+| `profiles` | o próprio usuário |
+
+Storage `product-images`: leitura pública (a foto vai num `<img>` sem header); `INSERT`/`UPDATE` só para `authenticated` com papel `estoque` ou `admin`.
+
+Realtime: as tabelas continuam na publication `supabase_realtime`; o `postgres_changes` respeita o RLS com o JWT da sessão.
+
+### 4.3 Guard nas RPCs (Migration B)
+As implementações das 12 RPCs foram movidas, **sem alteração de corpo**, para o schema `private` (não exposto pela API e sem `EXECUTE` para `anon`/`authenticated`), e ganharam `search_path = public`. No `public` ficam funções finas com a mesma assinatura que chamam `auth_guard`, aplicam a regra extra de cada uma e delegam para `private.*`. `EXECUTE` só para `authenticated`.
+
+| RPC | Papéis | Regra extra |
+| :--- | :--- | :--- |
+| `place_order_with_reservation`, `get_restaurant_recommendations` | `restaurante`, `admin` | `restaurante` só com `p_restaurant_id = current_restaurant_id()` |
+| `transition_order_status` | `restaurante`, `estoque`, `admin` | matriz de [`state-machine.md`](state-machine.md) seção 4, com o pedido travado por `FOR UPDATE` |
+| `apply_order_triage`, `restock_product`, `create_or_update_product`, `deactivate_product`, `reactivate_product`, `delete_product`, `check_product_usage`, `get_stock_forecasting` | `estoque`, `admin` | |
+| `get_admin_analytics` | `admin` | |
+
+`private.deactivate_product` chama `transition_order_status` sem qualificar o schema, o que resolve para a função pública: o auto-cancelamento passa pelo mesmo guard, com o papel de quem inativou o insumo (`estoque`/`admin`, sempre permitido). O rollback está comentado no fim do arquivo da migration.
+
+### 4.4 Criação de usuários (manual, fora do repositório)
+1. Dashboard do Supabase → **Authentication → Users → Add user → Create new user**, com e-mail e senha e **Auto Confirm User** marcado.
+2. SQL Editor:
+   ```sql
+   INSERT INTO public.profiles (id, role, restaurant_id, full_name)
+   SELECT id, 'restaurante', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'Nome da Pessoa'
+   FROM auth.users WHERE email = '<email do usuário>';
+   ```
+   Para `estoque` e `admin`, `restaurant_id` pode ser `NULL`.
+3. **Authentication → Sign In / Providers → Email**: desativar **Allow new users to sign up**.
+4. **Authentication → URL Configuration**: *Site URL* = `https://insumosync.vercel.app`.
+5. Para bloquear alguém: `UPDATE public.profiles SET is_active = false WHERE id = ...`. Para redefinir a senha: Dashboard → Users → usuário → *Reset password* ou editar a senha.
+
+O `supabase/seed.sql` não cria usuários: credencial não é versionada.
 
 

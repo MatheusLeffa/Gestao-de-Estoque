@@ -4,6 +4,7 @@
 
 import type {
   Product,
+  Restaurant,
   Order,
   OrderStatus,
   StockForecastItem,
@@ -195,6 +196,14 @@ const SEED_PRODUCTS: Product[] = [
     created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
   },
 ];
+
+const SEED_RESTAURANT: Restaurant = {
+  id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+  name: 'Bistrô Paris 6 — Unidade Jardins',
+  address: 'Rua Haddock Lobo, 1240 - Jardins, São Paulo - SP',
+  is_active: true,
+  created_at: new Date().toISOString(),
+};
 
 const SEED_ORDERS: Order[] = [
   {
@@ -397,6 +406,11 @@ class MockDataStore {
       localStorage.setItem('insumosync_mock_orders', JSON.stringify(this.orders));
       localStorage.setItem('insumosync_mock_logs', JSON.stringify(this.logs));
     }
+  }
+
+  // ─── Restaurante ────────────────────────────────────────────────────────────
+  getRestaurant(): Restaurant {
+    return SEED_RESTAURANT;
   }
 
   // ─── Produtos ───────────────────────────────────────────────────────────────

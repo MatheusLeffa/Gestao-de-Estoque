@@ -11,7 +11,7 @@
 | Agente | Domínio | Quando acionar | Definição |
 | :--- | :--- | :--- | :--- |
 | 🏛️ **`db-engineer`** | Tudo que roda no Postgres: migrations, RPCs atômicas, máquina de estados, estorno, RLS, Realtime, agregações de analytics e forecast | Qualquer tarefa que crie ou altere SQL ou que movimente `current_stock` | [`.claude/agents/db-engineer.md`](.claude/agents/db-engineer.md) |
-| 📱 **`frontend-engineer`** | Tudo que roda no navegador: App Router, componentes, UI mobile-first, gráficos, services, Realtime, chime, DemoSwitcher | Criar ou alterar telas, componentes, hooks, contextos e services | [`.claude/agents/frontend-engineer.md`](.claude/agents/frontend-engineer.md) |
+| 📱 **`frontend-engineer`** | Tudo que roda no navegador: App Router, componentes, UI mobile-first, gráficos, services, Realtime, chime, login e navegação por papel | Criar ou alterar telas, componentes, hooks, contextos e services | [`.claude/agents/frontend-engineer.md`](.claude/agents/frontend-engineer.md) |
 | 🧪 **`verifier`** | Verificação independente e somente-leitura: credenciais, tsc/build, invariante de estoque, RLS, sincronia da documentação | Ao fechar uma entrega, e sempre que env, cliente Supabase ou RLS forem tocados | [`.claude/agents/verifier.md`](.claude/agents/verifier.md) |
 
 ---
@@ -23,6 +23,10 @@ quando a tarefa é **autocontida e do domínio de um agente**, quando há **trab
 independente** (ex.: RPC nova e tela nova ao mesmo tempo), ou quando se quer uma
 **verificação feita por quem não escreveu o código**. Ajustes pequenos o agente principal
 faz direto, respeitando as mesmas regras.
+
+**RPC nova começa com `auth_guard`.** Toda função exposta ao cliente chama
+`public.auth_guard(ARRAY[...papéis])` antes de qualquer leitura ou escrita e fixa
+`SET search_path = public` (ver `docs/database-schema.md` seção 4).
 
 **Documentação é responsabilidade de quem muda o código.** Não existe agente dedicado a
 docs: o `db-engineer` e o `frontend-engineer` atualizam `antigravity.md` e `docs/` antes

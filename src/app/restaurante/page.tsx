@@ -21,7 +21,7 @@ import {
   ArrowRight,
   CheckCircle2,
 } from 'lucide-react';
-import { useDemo } from '@/contexts/DemoContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { chimeService } from '@/lib/audio/chime';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
 
@@ -46,8 +46,6 @@ import { SortControl } from '@/components/ui/SortControl';
 import { sortItems, dateValue, type SortDirection } from '@/lib/utils/sorting';
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
-
-const DEMO_RESTAURANT_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
 type Tab = 'catalogo' | 'pedidos';
 
@@ -81,8 +79,9 @@ const REST_ORDER_SORT_OPTIONS: { value: RestOrderSortKey; label: string }[] = [
 ];
 
 export default function RestaurantePage() {
-  const { activeRestaurant, soundEnabled } = useDemo();
-  const restaurantId = activeRestaurant?.id ?? DEMO_RESTAURANT_ID;
+  const { activeRestaurant, soundEnabled } = useAuth();
+  // O AuthGate só renderiza esta página com um restaurante resolvido.
+  const restaurantId = activeRestaurant?.id ?? '';
 
   // ── Tab state ──
   const [activeTab, setActiveTab] = useState<Tab>('catalogo');

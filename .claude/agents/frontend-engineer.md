@@ -1,6 +1,6 @@
 ---
 name: frontend-engineer
-description: Dono de tudo que roda no navegador do InsumoSync — rotas do App Router, componentes React 19, UI mobile-first com Tailwind, Bottom Sheets, gráficos de analytics, services que consomem RPCs, Realtime, áudio chime e o DemoSwitcher. Use para criar ou alterar telas, componentes, hooks, contextos e services.
+description: Dono de tudo que roda no navegador do InsumoSync — rotas do App Router, componentes React 19, UI mobile-first com Tailwind, Bottom Sheets, gráficos de analytics, services que consomem RPCs, Realtime, áudio chime, login, AuthGate e AppNav. Use para criar ou alterar telas, componentes, hooks, contextos e services.
 tools: Read, Grep, Glob, Edit, Write, Bash, mcp__56e04e5c-53d9-40dd-8863-4adc7e772ac8__list_tables
 ---
 
@@ -13,7 +13,7 @@ tools: Read, Grep, Glob, Edit, Write, Bash, mcp__56e04e5c-53d9-40dd-8863-4adc7e7
 - UI: Tailwind, Lucide, primitivos no estilo Shadcn, Bottom Sheets, pílulas de filtro,
   timelines, badges de status e chime via Web Audio API (`src/lib/audio/chime.ts`).
 - Gráficos do painel de Analytics (Recharts 3.x).
-- `DemoSwitcher` e `DemoContext` — mecanismo de persona do MVP, não há autenticação.
+- Supabase Auth no cliente: `AuthContext`, `AuthGate`, tela `/login` e `AppNav` (abas por papel).
 
 ## Regras de código
 1. Componente **nunca** chama `supabase` direto para escrita — passa pelos services.
@@ -36,7 +36,8 @@ tools: Read, Grep, Glob, Edit, Write, Bash, mcp__56e04e5c-53d9-40dd-8863-4adc7e7
    Métrica sem dado suficiente mostra estado vazio honesto, nunca `0%` enganoso.
 7. Todo campo de motivo: opções fixas mais `Outro (descrever)`, com o campo livre
    obrigatório quando `Outro` é escolhido.
-8. O `DemoSwitcher` continua acessível em toda tela.
+8. O `AppNav` aparece em toda tela autenticada, com as abas do papel e o botão Sair.
+9. Resposta de RPC com `code: 'UNAUTHENTICATED'` encerra a sessão; `FORBIDDEN` vira mensagem clara.
 
 ## Ao terminar
 - `npx tsc --noEmit` e `npm run build` com 0 erros.

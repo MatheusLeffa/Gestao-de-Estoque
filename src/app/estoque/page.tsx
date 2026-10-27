@@ -34,7 +34,7 @@ import {
   TrendingDown,
   MoreHorizontal,
 } from 'lucide-react';
-import { useDemo } from '@/contexts/DemoContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { chimeService } from '@/lib/audio/chime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { SortControl } from '@/components/ui/SortControl';
@@ -97,7 +97,7 @@ const PRODUCT_SORT_OPTIONS: { value: ProductSortKey; label: string }[] = [
 ];
 
 export default function EstoquePage() {
-  const { soundEnabled, setSoundEnabled } = useDemo();
+  const { soundEnabled, setSoundEnabled } = useAuth();
   const toggleSound = () => setSoundEnabled(!soundEnabled);
 
   // Dados principais
