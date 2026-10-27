@@ -29,11 +29,10 @@ import {
   Edit3,
   EyeOff,
   Eye,
-  Trash2,
   RotateCcw,
   Sparkles,
   TrendingDown,
-  Zap,
+  MoreHorizontal,
 } from 'lucide-react';
 import { useDemo } from '@/contexts/DemoContext';
 import { chimeService } from '@/lib/audio/chime';
@@ -45,6 +44,7 @@ import { RestockModal } from '@/components/estoque/RestockModal';
 import { CancelOrderModal } from '@/components/estoque/CancelOrderModal';
 import { ProductFormModal } from '@/components/estoque/ProductFormModal';
 import { ProductActionModal } from '@/components/estoque/ProductActionModal';
+import { ProductMoreActionsSheet } from '@/components/estoque/ProductMoreActionsSheet';
 import { OrderTimelineModal } from '@/components/restaurante/OrderTimelineModal';
 import { TransitActionModal } from '@/components/estoque/TransitActionModal';
 import { DispatchConfirmModal } from '@/components/estoque/DispatchConfirmModal';
@@ -142,6 +142,7 @@ export default function EstoquePage() {
   const [selectedOrderForDispatch, setSelectedOrderForDispatch] = useState<Order | null>(null);
   const [selectedProductForForm, setSelectedProductForForm] = useState<Product | null | 'new'>(null);
   const [selectedProductForAction, setSelectedProductForAction] = useState<Product | null>(null);
+  const [selectedProductForMoreActions, setSelectedProductForMoreActions] = useState<Product | null>(null);
   const [productActionMode, setProductActionMode] = useState<ProductActionMode>('deactivate');
   const [productConflictCount, setProductConflictCount] = useState(0);
   const [productHistoryCount, setProductHistoryCount] = useState(0);
@@ -1320,14 +1321,21 @@ export default function EstoquePage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {sortedProducts.map((p) => {
                 const isCritical = p.current_stock <= p.min_stock_alert;
-                const ratio = Math.min(100, Math.round((p.current_stock / (p.min_stock_alert * 2)) * 100));
+                // A escala da barra vai até 2× o mínimo, então o marcador do mínimo fica no meio
+                const hasMinAlert = p.min_stock_alert > 0;
+                const ratio = hasMinAlert
+                  ? Math.min(100, Math.round((p.current_stock / (p.min_stock_alert * 2)) * 100))
+                  : 100;
                 const forecast = forecastMap.get(p.id);
 
                 return (
                   <div
                     key={p.id}
-                    className={`p-4 rounded-2xl border transition-all bg-white flex flex-col justify-between gap-3 shadow-xs hover:border-slate-300 ${
-                      isCritical ? 'border-red-200 bg-red-50/20' : 'border-slate-200/80'
+                    className={`p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 shadow-xs ${
+                      // Ring complementa a borda: contorno de ~2px sem deslocar o layout do grid
+                      isCritical
+                        ? 'bg-red-50/40 border-red-400 ring-1 ring-red-400'
+                        : 'bg-white border-slate-200/80 hover:border-slate-300'
                     }`}
                   >
                     <div>
@@ -1364,19 +1372,42 @@ export default function EstoquePage() {
                         </div>
                       </div>
 
-                      {/* Barra de saúde do estoque */}
+                      {/* Saldo em destaque + barra de saúde com marcador do mínimo */}
                       <div className="mt-3">
-                        <div className="flex justify-between text-xs text-slate-500 mb-1">
-                          <span>Disponível: <strong className="text-slate-900">{p.current_stock} {p.unit}</strong></span>
-                          <span>Alerta Mínimo: {p.min_stock_alert} {p.unit}</span>
+                        <div className="flex items-end justify-between gap-2 mb-1.5">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Disponível</p>
+                            <p className="leading-none mt-0.5">
+                              <span
+                                className={`text-2xl font-extrabold tabular-nums ${
+                                  isCritical ? 'text-red-600' : 'text-slate-900'
+                                }`}
+                              >
+                                {p.current_stock}
+                              </span>
+                              <span className="ml-1 text-sm font-bold text-slate-500">{p.unit}</span>
+                            </p>
+                          </div>
+                          <p className="text-xs text-slate-500 pb-0.5">
+                            Mínimo: <strong className="text-slate-700">{p.min_stock_alert} {p.unit}</strong>
+                          </p>
                         </div>
-                        <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all ${
-                              isCritical ? 'bg-red-500' : 'bg-emerald-500'
-                            }`}
-                            style={{ width: `${Math.max(5, ratio)}%` }}
-                          />
+                        <div className="relative">
+                          <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all ${
+                                isCritical ? 'bg-red-500' : 'bg-emerald-500'
+                              }`}
+                              style={{ width: `${Math.max(5, ratio)}%` }}
+                            />
+                          </div>
+                          {hasMinAlert && (
+                            <div
+                              className="absolute left-1/2 -top-1 w-0.5 h-4 -translate-x-1/2 rounded-full bg-slate-700"
+                              title={`Alerta mínimo: ${p.min_stock_alert} ${p.unit}`}
+                              aria-hidden="true"
+                            />
+                          )}
                         </div>
                       </div>
 
@@ -1402,22 +1433,7 @@ export default function EstoquePage() {
                             })()}
                           </div>
 
-                          {forecast.needs_reorder ? (
-                            <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-200/60">
-                              <span className="text-[11px] font-semibold text-purple-900 flex items-center gap-1">
-                                <Sparkles className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-                                Sugestão: Pedir +{forecast.suggested_reorder_qty} {p.unit}
-                              </span>
-                              <button
-                                onClick={() => handleOpenRestock(p, forecast.suggested_reorder_qty, 'Reposição recomendada por previsão de consumo')}
-                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-purple-600 hover:bg-purple-700 text-white flex items-center gap-1 transition-colors shrink-0 min-h-[30px]"
-                                title="Preencher reabastecimento com a quantidade recomendada"
-                              >
-                                <Zap className="w-3 h-3" />
-                                <span>Solicitar</span>
-                              </button>
-                            </div>
-                          ) : (
+                          {!forecast.needs_reorder && (
                             <div className="pt-1 border-t border-slate-200/60 text-[10px] text-slate-500 flex items-center gap-1">
                               <CheckCircle2 className="w-3 h-3 text-emerald-500" />
                               <span>Cobertura segura de estoque</span>
@@ -1440,44 +1456,31 @@ export default function EstoquePage() {
                         <span>Reativar no Catálogo</span>
                       </button>
                     ) : (
-                      <div className="space-y-2">
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => setSelectedProductForForm(p)}
-                            className="flex-1 py-2.5 px-2 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 flex items-center justify-center gap-1 transition-all active:scale-[0.98] min-h-[44px]"
-                            title="Editar produto"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                            <span>Editar</span>
-                          </button>
-                          <button
-                            onClick={() => handleOpenRestock(p)}
-                            className="flex-[2] py-2.5 px-3 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] min-h-[44px]"
-                          >
-                            <Plus className="w-4 h-4" />
-                            <span>Reabastecer</span>
-                          </button>
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleOpenProductAction(p, 'deactivate')}
-                            disabled={isSubmittingAction}
-                            className="flex-1 py-2.5 px-2 rounded-xl text-xs font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 flex items-center justify-center gap-1 transition-all active:scale-[0.98] min-h-[44px] disabled:opacity-50"
-                            title="Ocultar do catálogo preservando o histórico"
-                          >
-                            <EyeOff className="w-3.5 h-3.5" />
-                            <span>Desativar</span>
-                          </button>
-                          <button
-                            onClick={() => handleOpenProductAction(p, 'delete')}
-                            disabled={isSubmittingAction}
-                            className="flex-1 py-2.5 px-2 rounded-xl text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 flex items-center justify-center gap-1 transition-all active:scale-[0.98] min-h-[44px] disabled:opacity-50"
-                            title="Remover em definitivo (somente se nunca usado em pedidos)"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Remover</span>
-                          </button>
-                        </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setSelectedProductForForm(p)}
+                          className="flex-1 py-2.5 px-2 rounded-xl text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 flex items-center justify-center gap-1 transition-all active:scale-[0.98] min-h-[44px]"
+                          title="Editar produto"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>Editar</span>
+                        </button>
+                        <button
+                          onClick={() => handleOpenRestock(p)}
+                          className="flex-[2] py-2.5 px-3 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] min-h-[44px]"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>Reabastecer</span>
+                        </button>
+                        <button
+                          onClick={() => setSelectedProductForMoreActions(p)}
+                          disabled={isSubmittingAction}
+                          className="w-11 shrink-0 rounded-xl text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 flex items-center justify-center transition-all active:scale-[0.98] min-h-[44px] disabled:opacity-50"
+                          aria-label={`Mais ações para ${p.name}`}
+                          title="Mais ações"
+                        >
+                          <MoreHorizontal className="w-4 h-4" />
+                        </button>
                       </div>
                     )}
                   </div>
@@ -1512,6 +1515,17 @@ export default function EstoquePage() {
         isSubmitting={isSubmittingAction}
         initialQuantity={restockPrefillQty}
         initialReason={restockPrefillReason}
+      />
+
+      {/* Bottom Sheet de ações secundárias do insumo (Desativar / Remover) */}
+      <ProductMoreActionsSheet
+        isOpen={!!selectedProductForMoreActions}
+        product={selectedProductForMoreActions}
+        onClose={() => setSelectedProductForMoreActions(null)}
+        onSelect={(product, mode) => {
+          setSelectedProductForMoreActions(null);
+          handleOpenProductAction(product, mode);
+        }}
       />
 
       {/* Modal de Previsibilidade de Estoque & Plano de Reposição */}
