@@ -11,9 +11,10 @@ Este documento detalha todas as regras operacionais, restrições e lógicas de 
 - O saldo de estoque (`current_stock`) é estritamente controlado em nível de depósito central.
 - O campo `min_stock_alert` define o limite mínimo de segurança; sempre que `current_stock <= min_stock_alert`, o insumo é sinalizado como **Crítico / Estoque Baixo**.
 
-### 1.2 Reabastecimento Manual (Entrada de Estoque)
-- Operadores do Estoque Central podem realizar entradas manuais de insumos através da RPC `restock_product(p_product_id, p_quantity, p_reason)`.
-- Toda entrada incrementa atomicamente o `current_stock` e gera um registro de auditoria na tabela `stock_movements` com `type = 'ENTRADA_MANUAL'`.
+### 1.2 Entradas de Estoque
+- **Compra com nota fiscal (padrão):** toda mercadoria comprada entra pela **Entrada por Nota** (seção 10), que registra fornecedor, nota, itens, custo e anexos, e gera `stock_movements` do tipo `ENTRADA_COMPRA`.
+- **Ajuste manual (exceção):** para entradas sem nota (doação, acerto de inventário), a RPC `restock_product(p_product_id, p_quantity, p_reason)` continua disponível na tela como **"Ajuste manual"**, com motivo obrigatório em lista fixa mais `Outro (descrever)`. Gera `ENTRADA_MANUAL`.
+- Toda entrada incrementa atomicamente o `current_stock` e gera um registro de auditoria em `stock_movements`.
 
 ### 1.3 Ciclo de Vida do Insumo no Catálogo (CRUD)
 
@@ -321,7 +322,9 @@ A regra vale **no banco** (RLS e `auth_guard` nas RPCs); a tela apenas a reflete
 | `restock_product`, `create_or_update_product`, `deactivate_product`, `reactivate_product`, `delete_product`, `check_product_usage` | ✅ | ❌ | ✅ |
 | `get_stock_forecasting` | ✅ | ❌ | ✅ |
 | `get_admin_analytics` | ❌ | ❌ | ✅ |
+| Ler e escrever compras: `suppliers`, `purchase_invoices` e itens, `product_costs`, RPCs da seção 10 | ✅ | ❌ | ✅ |
 | Enviar foto ao bucket `product-images` | ✅ | ❌ | ✅ |
+| Enviar e ler arquivos do bucket privado `purchase-invoices` | ✅ | ❌ | ✅ |
 | Escrita direta (`INSERT`/`UPDATE`/`DELETE`) em qualquer tabela de negócio | ❌ | ❌ | ❌ |
 
 Quem pode cada transição de status está em [`state-machine.md`](state-machine.md) seção 4.
@@ -329,3 +332,63 @@ Quem pode cada transição de status está em [`state-machine.md`](state-machine
 ### 9.3 Respostas de negação
 - Sem sessão: `{ success: false, code: 'UNAUTHENTICATED' }`. O cliente encerra a sessão local e volta para `/login`.
 - Papel sem permissão, perfil inativo ou recurso de outro restaurante: `{ success: false, code: 'FORBIDDEN' }`. O cliente mostra a mensagem sem quebrar a tela.
+
+---
+
+## 10. Compras e Notas Fiscais (Almoxarifado)
+
+O Estoque Central registra cada compra como uma **Entrada por Nota**: uma nota fiscal com vários itens, todos lançados no estoque na mesma transação. O objetivo é rastrear a origem de cada entrada e controlar quanto se gasta, com quem e quando. Custos e notas são visíveis só para `estoque` e `admin`.
+
+### 10.1 Fornecedores
+- Cadastro com **nome** (obrigatório), **CNPJ** (opcional; quando informado, único e validado pelos dígitos verificadores, `INVALID_CNPJ` / `DUPLICATE_SUPPLIER`), telefone e e-mail.
+- Fornecedor com notas não é apagado: é **inativado** e some das listas de escolha, mas continua no histórico.
+- Na importação do XML, o fornecedor é localizado pelo CNPJ do emitente. Se não existir, é criado com os dados da nota depois da confirmação do almoxarife.
+
+### 10.2 Entrada por nota
+- **Obrigatórios:** fornecedor, número da nota, data de emissão e pelo menos um item (`EMPTY_INVOICE`).
+- **Opcionais:** série e chave de acesso da NF-e (44 posições, validada pelo dígito verificador, `INVALID_ACCESS_KEY`). Chave com letras, de emitente com CNPJ alfanumérico, tem só o formato verificado.
+- **Normalização:** número e série só com dígitos perdem os zeros à esquerda (`000123` = `123`), para a nota digitada e a importada do XML baterem na checagem de duplicidade. A data de emissão não pode ser futura (`INVALID_DATE`).
+- **Fornecedor e insumos ativos:** fornecedor inativo (`SUPPLIER_INACTIVE`) ou insumo inativo (`PRODUCT_INACTIVE`) não recebem entrada.
+- **Sem duplicidade:** a mesma nota (fornecedor + série + número, ou a mesma chave de acesso) não entra duas vezes (`DUPLICATE_INVOICE`). A trava vale só entre notas `LANCADA`: uma nota estornada por ter sido lançada errada pode ser lançada de novo, corrigida.
+- **Cada item** liga uma linha da nota a um insumo do catálogo, com:
+  - quantidade na unidade da nota (`invoice_qty > 0`);
+  - **fator de conversão** para a unidade do insumo (`conversion_factor > 0`). *Ex.: a nota vende "CX com 12 L" e o insumo é controlado em "L" → fator 12*;
+  - custo unitário na unidade da nota (`unit_cost >= 0`, `INVALID_COST`).
+- **Quantidade que entra no estoque:** `stock_qty = invoice_qty × conversion_factor`.
+- **Total da nota:** `soma dos itens + frete + outras despesas − desconto`. Com XML, esse total é comparado ao total declarado; divergência é **avisada** na tela, sem bloquear.
+- **Efeito no estoque:** cada item soma `stock_qty` em `current_stock` e gera `stock_movements` do tipo `ENTRADA_COMPRA`, ligado à nota.
+- **O arquivo da nota é recomendado, não obrigatório.** A lista destaca as notas sem anexo.
+
+### 10.3 Custo do insumo
+Custo médio ponderado móvel, recalculado a cada entrada, em `product_costs`:
+
+$$
+	ext{custo}_{conv} = rac{	ext{unit\_cost}}{	ext{conversion\_factor}}
+\qquad
+	ext{médio}_{novo} = rac{S 	imes 	ext{médio}_{atual} + Q 	imes 	ext{custo}_{conv}}{S + Q}
+$$
+
+- $S$ é o `current_stock` antes da entrada e $Q$ é o `stock_qty`. Se $S \le 0$ ou não houver médio anterior, o médio passa a ser $	ext{custo}_{conv}$.
+- Também ficam registrados o **último custo** e a data da última compra.
+- Quando o mesmo insumo aparece em mais de uma linha da nota, as linhas são aplicadas em sequência.
+
+### 10.4 Arquivos da nota
+- Formatos: PDF, JPG, PNG, WEBP (foto do celular) e XML. **Até 10 MB por arquivo.** Uma nota pode ter vários arquivos.
+- Ficam no bucket **privado** `purchase-invoices`, na pasta da nota (`{invoice_id}/`). A visualização usa link temporário (*signed URL*).
+- O arquivo é enviado **depois** de a nota ser criada e então registrado na nota. Se o envio falhar, a nota fica sem anexo e pode receber o arquivo mais tarde.
+
+### 10.5 Importação do XML da NF-e
+- Lida no navegador. Aceita NF-e modelo 55 (`nfeProc` ou `NFe`, namespace `http://www.portalfiscal.inf.br/nfe`); outros arquivos são recusados com mensagem clara.
+- A **assinatura digital não é validada**: o XML é documento de apoio para preencher a entrada, e quem confirma é o almoxarife.
+- Cada item da nota precisa ser associado a um insumo. A associação (fornecedor + código do produto na nota → insumo + fator) fica **memorizada** para as próximas notas daquele fornecedor.
+- Itens da nota que não são insumos podem ser marcados como **ignorados** e não entram no estoque.
+
+### 10.6 Estorno de entrada
+- Uma entrada lançada errada pode ser estornada por `estoque` ou `admin`, com motivo obrigatório: *Nota lançada em duplicidade*, *Quantidade ou insumo errado*, *Mercadoria devolvida ao fornecedor* ou `Outro (descrever)`.
+- O estorno retira de cada insumo exatamente o `stock_qty` que a nota colocou e gera `ESTORNO_COMPRA`. É **recusado se algum insumo não tiver saldo suficiente** (`INSUFFICIENT_STOCK`), porque parte já saiu para os restaurantes.
+- A nota fica no histórico com situação `ESTORNADA` e não pode ser estornada de novo (`ALREADY_REVERSED`).
+- O custo médio **não é recalculado para trás**. Para corrigir um custo, lança-se a nota correta.
+
+### 10.7 Invariante das compras
+> Para cada insumo, a soma dos `stock_movements` do tipo `ENTRADA_COMPRA` e `ESTORNO_COMPRA` é igual à soma de `stock_qty` das notas com situação `LANCADA`.
+

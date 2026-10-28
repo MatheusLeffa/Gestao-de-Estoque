@@ -14,6 +14,13 @@ erDiagram
     orders ||--o{ order_status_logs : "registra histórico"
     products ||--o{ stock_movements : "rastreia"
     restaurants ||--o{ profiles : "emprega"
+    suppliers ||--o{ purchase_invoices : "emite"
+    purchase_invoices ||--o{ purchase_invoice_items : "contém"
+    purchase_invoices ||--o{ purchase_invoice_files : "anexa"
+    products ||--o{ purchase_invoice_items : "entra por"
+    products ||--o| product_costs : "custa"
+    suppliers ||--o{ supplier_product_links : "de-para"
+    purchase_invoices ||--o{ stock_movements : "origina"
 
     profiles {
         uuid id PK "= auth.users.id"
@@ -81,7 +88,57 @@ erDiagram
         text type
         numeric quantity
         text reason
+        uuid purchase_invoice_id FK
+        uuid created_by
         timestamptz created_at
+    }
+
+    suppliers {
+        uuid id PK
+        text name
+        text cnpj
+        boolean is_active
+    }
+
+    purchase_invoices {
+        uuid id PK
+        uuid supplier_id FK
+        text invoice_number
+        text series
+        text access_key
+        date issued_at
+        numeric total_amount
+        text status
+    }
+
+    purchase_invoice_items {
+        uuid id PK
+        uuid invoice_id FK
+        uuid product_id FK
+        numeric invoice_qty
+        numeric conversion_factor
+        numeric stock_qty
+        numeric unit_cost
+    }
+
+    purchase_invoice_files {
+        uuid id PK
+        uuid invoice_id FK
+        text storage_path
+        text kind
+    }
+
+    supplier_product_links {
+        uuid supplier_id PK
+        text supplier_code PK
+        uuid product_id FK
+        numeric conversion_factor
+    }
+
+    product_costs {
+        uuid product_id PK
+        numeric average_cost
+        numeric last_cost
     }
 ```
 
@@ -156,9 +213,11 @@ erDiagram
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PRIMARY KEY DEFAULT gen_random_uuid()` | Identificador da movimentação |
 | `product_id` | `UUID` | `REFERENCES products(id) ON DELETE CASCADE` | Insumo movimentado |
-| `type` | `TEXT` | `NOT NULL` | `ENTRADA_MANUAL`, `SAIDA_PEDIDO`, `ESTORNO_CANCELAMENTO` |
-| `quantity` | `NUMERIC` | `NOT NULL` | Quantidade movimentada (positiva ou negativa) |
-| `reason` | `TEXT` | `NULL` | Motivo ou número do pedido |
+| `type` | `TEXT` | `NOT NULL` | `ENTRADA_MANUAL`, `SAIDA_PEDIDO`, `ESTORNO_CANCELAMENTO`, `ENTRADA_COMPRA`, `ESTORNO_COMPRA` |
+| `quantity` | `NUMERIC` | `NOT NULL` | Quantidade movimentada (positiva para entradas, negativa para saídas) |
+| `reason` | `TEXT` | `NULL` | Motivo, número do pedido ou da nota |
+| `purchase_invoice_id` | `UUID` | `NULL REFERENCES purchase_invoices(id)` | Nota que originou `ENTRADA_COMPRA`/`ESTORNO_COMPRA` |
+| `created_by` | `UUID` | `NULL REFERENCES auth.users(id)` | Autor (preenchido pelas RPCs de compra; nulo nos registros antigos) |
 | `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` | Data e hora do movimento |
 
 ### 2.7 `profiles`
@@ -207,6 +266,90 @@ erDiagram
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | Momento |
 
 > RLS das três tabelas: `SELECT` para `admin` ou para o próprio restaurante. Sem policy de escrita; tudo passa pelas RPCs.
+
+### 2.11 `suppliers`
+| Coluna | Tipo | Restrições | Descrição |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY DEFAULT gen_random_uuid()` | Identificador |
+| `name` | `TEXT` | `NOT NULL CHECK (btrim(name) <> '')` | Razão social ou nome |
+| `cnpj` | `TEXT` | `NULL`, `CHECK (cnpj ~ '^[0-9A-Z]{12}[0-9]{2}$')`, único quando não nulo | Só caracteres, sem máscara. Aceita o CNPJ alfanumérico |
+| `phone` | `TEXT` | `NULL` | Telefone |
+| `email` | `TEXT` | `NULL` | E-mail |
+| `is_active` | `BOOLEAN` | `NOT NULL DEFAULT true` | Inativo some das listas de escolha |
+| `created_at`, `updated_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | Criação e última edição |
+
+### 2.12 `purchase_invoices`
+| Coluna | Tipo | Restrições | Descrição |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY DEFAULT gen_random_uuid()` | Identificador da entrada |
+| `supplier_id` | `UUID` | `NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT` | Emitente |
+| `invoice_number` | `TEXT` | `NOT NULL CHECK (btrim(invoice_number) <> '')` | Número da nota |
+| `series` | `TEXT` | `NOT NULL DEFAULT ''` | Série (vazia quando não informada) |
+| `access_key` | `TEXT` | `NULL CHECK (access_key ~ '^[0-9A-Z]{43}[0-9]$')` | Chave de acesso da NF-e |
+| `issued_at` | `DATE` | `NOT NULL` | Data de emissão |
+| `received_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | Momento da entrada no estoque |
+| `items_total` | `NUMERIC` | `NOT NULL CHECK (>= 0)` | Soma dos itens |
+| `freight`, `other_costs`, `discount` | `NUMERIC` | `NOT NULL DEFAULT 0 CHECK (>= 0)` | Frete, outras despesas e desconto |
+| `total_amount` | `NUMERIC` | `NOT NULL CHECK (>= 0)` | `items_total + freight + other_costs − discount` |
+| `xml_total` | `NUMERIC` | `NULL` | Total declarado no XML, para conferência |
+| `status` | `TEXT` | `NOT NULL DEFAULT 'LANCADA' CHECK (status IN ('LANCADA','ESTORNADA'))` | Situação |
+| `notes` | `TEXT` | `NULL` | Observações |
+| `created_by` | `UUID` | `REFERENCES auth.users(id)` | Quem lançou |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | Lançamento |
+| `reversed_at`, `reversed_by`, `reversal_reason` | | `NULL` | Preenchidos no estorno |
+
+> Únicos parciais **só entre notas `LANCADA`**: (`supplier_id`, `series`, `invoice_number`) e `access_key`. Uma nota estornada por erro pode ser lançada de novo, corrigida.
+
+### 2.13 `purchase_invoice_items`
+| Coluna | Tipo | Restrições | Descrição |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY DEFAULT gen_random_uuid()` | Identificador |
+| `invoice_id` | `UUID` | `NOT NULL REFERENCES purchase_invoices(id) ON DELETE CASCADE` | Nota |
+| `line_number` | `INT` | `NOT NULL`, único por nota | Ordem do item na nota |
+| `product_id` | `UUID` | `NOT NULL REFERENCES products(id) ON DELETE RESTRICT` | Insumo do catálogo |
+| `supplier_code` | `TEXT` | `NULL` | Código do produto na nota (`cProd`) |
+| `description` | `TEXT` | `NULL` | Descrição do produto na nota (`xProd`) |
+| `invoice_unit` | `TEXT` | `NULL` | Unidade na nota (`uCom`) |
+| `invoice_qty` | `NUMERIC` | `NOT NULL CHECK (> 0)` | Quantidade na unidade da nota |
+| `conversion_factor` | `NUMERIC` | `NOT NULL DEFAULT 1 CHECK (> 0)` | Unidades do insumo por unidade da nota |
+| `stock_qty` | `NUMERIC` | `NOT NULL CHECK (> 0)` | `invoice_qty × conversion_factor`, o que entrou no estoque |
+| `unit_cost` | `NUMERIC` | `NOT NULL CHECK (>= 0)` | Custo por unidade da nota |
+| `total_cost` | `NUMERIC` | `NOT NULL CHECK (>= 0)` | `round(invoice_qty × unit_cost, 2)` |
+
+### 2.14 `purchase_invoice_files`
+| Coluna | Tipo | Restrições | Descrição |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY DEFAULT gen_random_uuid()` | Identificador |
+| `invoice_id` | `UUID` | `NOT NULL REFERENCES purchase_invoices(id) ON DELETE CASCADE` | Nota |
+| `storage_path` | `TEXT` | `NOT NULL UNIQUE` | Caminho no bucket `purchase-invoices`, sempre `{invoice_id}/...` |
+| `kind` | `TEXT` | `NOT NULL CHECK (kind IN ('XML','PDF','IMAGEM'))` | Tipo do arquivo |
+| `size_bytes` | `BIGINT` | `NOT NULL` | Tamanho, lido de `storage.objects` |
+| `uploaded_by` | `UUID` | `REFERENCES auth.users(id)` | Quem anexou |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | Momento |
+
+### 2.15 `supplier_product_links`
+| Coluna | Tipo | Restrições | Descrição |
+| :--- | :--- | :--- | :--- |
+| `supplier_id` | `UUID` | `PK`, `REFERENCES suppliers(id) ON DELETE CASCADE` | Fornecedor |
+| `supplier_code` | `TEXT` | `PK` | Código do produto na nota do fornecedor |
+| `product_id` | `UUID` | `NOT NULL REFERENCES products(id) ON DELETE CASCADE` | Insumo associado |
+| `conversion_factor` | `NUMERIC` | `NOT NULL CHECK (> 0)` | Último fator usado |
+| `updated_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | Última associação |
+
+> Gravada pela própria `register_purchase_entry` sempre que o item traz `supplier_code`: a próxima nota do mesmo fornecedor já vem associada.
+
+### 2.16 `product_costs`
+| Coluna | Tipo | Restrições | Descrição |
+| :--- | :--- | :--- | :--- |
+| `product_id` | `UUID` | `PK`, `REFERENCES products(id) ON DELETE CASCADE` | Insumo |
+| `average_cost` | `NUMERIC` | `NOT NULL CHECK (>= 0)` | Custo médio ponderado móvel, por unidade do insumo (business-rules 10.3) |
+| `last_cost` | `NUMERIC` | `NOT NULL CHECK (>= 0)` | Custo da última compra, por unidade do insumo |
+| `last_purchase_at` | `TIMESTAMPTZ` | `NOT NULL` | Data da última compra |
+| `updated_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | Última atualização |
+
+> Separada de `products` porque todos os papéis leem `products`, e o custo é visível só para `estoque` e `admin`.
+
+> RLS das seis tabelas de compras: `SELECT` só para `estoque` e `admin`. Sem policy de escrita; tudo passa pelas RPCs 16 a 20.
 
 ---
 
@@ -306,6 +449,30 @@ erDiagram
 15. **`register_kitchen_loss(p_restaurant_id uuid, p_product_id uuid, p_quantity numeric, p_reason text)`** — papéis `restaurante` (só o próprio) e `admin`:
     - Exige contagem inicial, `p_quantity > 0`, motivo não vazio e saldo suficiente (`INSUFFICIENT_KITCHEN_STOCK`). Grava `PERDA`.
 
+16. **`upsert_supplier(p_id uuid, p_name text, p_cnpj text, p_phone text, p_email text)`** — papéis `estoque` e `admin`:
+    - `p_id` nulo cria; preenchido edita. O CNPJ é normalizado (maiúsculas, sem máscara) e validado pelos dígitos verificadores, inclusive o alfanumérico.
+    - Retorna `{ success, supplier_id, action: 'created' | 'updated' }`. Erros: `INVALID_PAYLOAD`, `INVALID_CNPJ`, `DUPLICATE_SUPPLIER`, `SUPPLIER_NOT_FOUND`.
+
+17. **`set_supplier_active(p_id uuid, p_active boolean)`** — papéis `estoque` e `admin`:
+    - Retorna `{ success, supplier_id, is_active }`. Erro: `SUPPLIER_NOT_FOUND`.
+
+18. **`register_purchase_entry(p_supplier_id uuid, p_invoice jsonb, p_items jsonb)`** — papéis `estoque` e `admin`:
+    - `p_invoice`: `{ invoice_number, series?, access_key?, issued_at ('YYYY-MM-DD'), freight?, other_costs?, discount?, xml_total?, notes? }`.
+    - `p_items`: `[{ product_id, invoice_qty, conversion_factor?, unit_cost, supplier_code?, description?, invoice_unit? }]`, na ordem da nota.
+    - Valida tudo antes de escrever. Trava os `products` envolvidos com `SELECT ... FOR UPDATE` em ordem de `id`, e as linhas de `product_costs` também.
+    - Soma `stock_qty` em `current_stock`, grava `ENTRADA_COMPRA` por item, recalcula `product_costs` (business-rules 10.3) e atualiza `supplier_product_links`.
+    - Retorna `{ success, invoice_id, items_total, total_amount, items_count }`.
+    - Erros: `INVALID_PAYLOAD`, `SUPPLIER_NOT_FOUND`, `SUPPLIER_INACTIVE`, `INVALID_DATE`, `INVALID_ACCESS_KEY`, `EMPTY_INVOICE`, `PRODUCT_NOT_FOUND`, `PRODUCT_INACTIVE`, `INVALID_QUANTITY`, `INVALID_COST`, `DUPLICATE_INVOICE` (+ `invoice_id` da nota existente). Os de item trazem `line`.
+
+19. **`attach_purchase_file(p_invoice_id uuid, p_storage_path text, p_kind text)`** — papéis `estoque` e `admin`:
+    - O arquivo já precisa estar em `storage.objects`, no bucket `purchase-invoices` e na pasta `{p_invoice_id}/`. O tamanho é lido do Storage, não do cliente.
+    - Retorna `{ success, file_id }`. Erros: `INVOICE_NOT_FOUND`, `INVALID_PAYLOAD`, `FILE_NOT_FOUND`, `ALREADY_ATTACHED`.
+
+20. **`reverse_purchase_entry(p_invoice_id uuid, p_reason text)`** — papéis `estoque` e `admin`:
+    - Trava a nota e os `products` (`FOR UPDATE`, em ordem de `id`). Recusa se algum insumo não tiver saldo para devolver o `stock_qty`.
+    - Grava `ESTORNO_COMPRA` (quantidade negativa) por insumo, marca a nota `ESTORNADA` e não mexe em `product_costs`.
+    - Retorna `{ success, invoice_id, reversed_items }`. Erros: `INVOICE_NOT_FOUND`, `ALREADY_REVERSED`, `REASON_REQUIRED`, `INSUFFICIENT_STOCK` (+ `product_id`, `product_name`, `available`, `required`).
+
 > **Segurança:** até a Migration B (seção 4.3) ser aplicada, só `get_stock_forecasting` e `get_restaurant_recommendations` fixam `search_path = public`, e todas as RPCs ainda podem ser executadas por `anon`. Esse aviso sai daqui quando a Migration B estiver no ar.
 
 ---
@@ -338,9 +505,12 @@ Somente `SELECT`, somente para `authenticated`. Nenhuma tabela de negócio tem p
 | `orders` | `estoque`, `admin`; `restaurante` onde `restaurant_id = current_restaurant_id()` |
 | `order_items`, `order_status_logs` | idem, pelo pedido pai |
 | `stock_movements` | `estoque`, `admin` |
+| `suppliers`, `purchase_invoices`, `purchase_invoice_items`, `purchase_invoice_files`, `supplier_product_links`, `product_costs` | `estoque`, `admin` |
 | `profiles` | o próprio usuário |
 
 Storage `product-images`: leitura pública (a foto vai num `<img>` sem header); `INSERT`/`UPDATE` só para `authenticated` com papel `estoque` ou `admin`.
+
+Storage `purchase-invoices` (migration `20261029000000_purchases.sql`): bucket **privado**, `file_size_limit` de 10 MB e tipos `application/pdf`, `image/jpeg`, `image/png`, `image/webp`, `application/xml` e `text/xml`. `SELECT` e `INSERT` só para `estoque`/`admin`, e o `INSERT` exige que a primeira pasta do caminho seja o `id` de uma nota existente. Sem `UPDATE` nem `DELETE` para o cliente. A leitura na tela usa *signed URL*.
 
 Realtime: as tabelas continuam na publication `supabase_realtime`; o `postgres_changes` respeita o RLS com o JWT da sessão.
 
@@ -353,6 +523,7 @@ As implementações das 12 RPCs foram movidas, **sem alteração de corpo**, par
 | `transition_order_status` | `restaurante`, `estoque`, `admin` | matriz de [`state-machine.md`](state-machine.md) seção 4, com o pedido travado por `FOR UPDATE` |
 | `apply_order_triage`, `restock_product`, `create_or_update_product`, `deactivate_product`, `reactivate_product`, `delete_product`, `check_product_usage`, `get_stock_forecasting` | `estoque`, `admin` | |
 | `get_admin_analytics` | `admin` | |
+| `upsert_supplier`, `set_supplier_active`, `register_purchase_entry`, `attach_purchase_file`, `reverse_purchase_entry` | `estoque`, `admin` | migration `20261029000000_purchases.sql` |
 
 `private.deactivate_product` chama `transition_order_status` sem qualificar o schema, o que resolve para a função pública: o auto-cancelamento passa pelo mesmo guard, com o papel de quem inativou o insumo (`estoque`/`admin`, sempre permitido). O rollback está comentado no fim do arquivo da migration.
 

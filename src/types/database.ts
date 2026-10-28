@@ -16,7 +16,12 @@ export type DelayReason = 'Falta de Produto' | 'Transporte Indisponível' | stri
 
 export type CompletionType = 'TOTAL' | 'PARCIAL' | 'NAO_ENTREGUE';
 
-export type StockMovementType = 'ENTRADA_MANUAL' | 'SAIDA_PEDIDO' | 'ESTORNO_CANCELAMENTO';
+export type StockMovementType =
+  | 'ENTRADA_MANUAL'
+  | 'SAIDA_PEDIDO'
+  | 'ESTORNO_CANCELAMENTO'
+  | 'ENTRADA_COMPRA'
+  | 'ESTORNO_COMPRA';
 
 export type ProductCategory =
   | 'Carnes & Aves'
@@ -89,6 +94,9 @@ export interface StockMovement {
   type: StockMovementType;
   quantity: number;
   reason: string | null;
+  /** Nota que originou `ENTRADA_COMPRA` / `ESTORNO_COMPRA`. */
+  purchase_invoice_id?: string | null;
+  created_by?: string | null;
   created_at: string;
   // Joins
   product?: Product;
@@ -490,3 +498,201 @@ export interface MissingItemPayload {
 }
 
 
+
+// ─── Compras e Notas Fiscais (business-rules seção 10) ──────────────────────
+
+export type PurchaseInvoiceStatus = 'LANCADA' | 'ESTORNADA';
+
+export type PurchaseFileKind = 'XML' | 'PDF' | 'IMAGEM';
+
+/** Códigos de erro das RPCs de compras. */
+export type PurchaseErrorCode =
+  | 'INVALID_PAYLOAD'
+  | 'INVALID_CNPJ'
+  | 'DUPLICATE_SUPPLIER'
+  | 'SUPPLIER_NOT_FOUND'
+  | 'SUPPLIER_INACTIVE'
+  | 'INVALID_DATE'
+  | 'INVALID_ACCESS_KEY'
+  | 'EMPTY_INVOICE'
+  | 'PRODUCT_NOT_FOUND'
+  | 'PRODUCT_INACTIVE'
+  | 'INVALID_QUANTITY'
+  | 'INVALID_COST'
+  | 'DUPLICATE_INVOICE'
+  | 'INVOICE_NOT_FOUND'
+  | 'FILE_NOT_FOUND'
+  | 'ALREADY_ATTACHED'
+  | 'ALREADY_REVERSED'
+  | 'REASON_REQUIRED'
+  | 'INSUFFICIENT_STOCK';
+
+export interface Supplier {
+  id: string;
+  name: string;
+  /** Só caracteres, sem máscara; pode ser alfanumérico. */
+  cnpj: string | null;
+  phone: string | null;
+  email: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PurchaseInvoice {
+  id: string;
+  supplier_id: string;
+  invoice_number: string;
+  /** Vazia quando a nota não tem série. */
+  series: string;
+  access_key: string | null;
+  /** Data `YYYY-MM-DD`. */
+  issued_at: string;
+  received_at: string;
+  items_total: number;
+  freight: number;
+  other_costs: number;
+  discount: number;
+  total_amount: number;
+  /** Total declarado no XML, para conferência. */
+  xml_total: number | null;
+  status: PurchaseInvoiceStatus;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  reversed_at: string | null;
+  reversed_by: string | null;
+  reversal_reason: string | null;
+  // Joins
+  supplier?: Supplier;
+  purchase_invoice_items?: PurchaseInvoiceItem[];
+  purchase_invoice_files?: PurchaseInvoiceFile[];
+}
+
+export interface PurchaseInvoiceItem {
+  id: string;
+  invoice_id: string;
+  line_number: number;
+  product_id: string;
+  supplier_code: string | null;
+  description: string | null;
+  invoice_unit: string | null;
+  invoice_qty: number;
+  /** Unidades do insumo por unidade da nota. */
+  conversion_factor: number;
+  /** `invoice_qty × conversion_factor`: o que entrou no estoque. */
+  stock_qty: number;
+  unit_cost: number;
+  total_cost: number;
+  // Joins
+  product?: Product;
+}
+
+export interface PurchaseInvoiceFile {
+  id: string;
+  invoice_id: string;
+  /** Sempre `{invoice_id}/...` no bucket `purchase-invoices`. */
+  storage_path: string;
+  kind: PurchaseFileKind;
+  size_bytes: number;
+  uploaded_by: string | null;
+  created_at: string;
+}
+
+export interface SupplierProductLink {
+  supplier_id: string;
+  supplier_code: string;
+  product_id: string;
+  conversion_factor: number;
+  updated_at: string;
+}
+
+/** Custo por unidade do insumo; visível só para `estoque` e `admin`. */
+export interface ProductCost {
+  product_id: string;
+  average_cost: number;
+  last_cost: number;
+  last_purchase_at: string;
+  updated_at: string;
+}
+
+export interface UpsertSupplierPayload {
+  /** `undefined` cria; preenchido edita. */
+  id?: string;
+  name: string;
+  cnpj?: string | null;
+  phone?: string | null;
+  email?: string | null;
+}
+
+export interface UpsertSupplierResponse {
+  success: boolean;
+  supplier_id?: string;
+  action?: 'created' | 'updated';
+  code?: PurchaseErrorCode | RpcAuthErrorCode | string;
+  error?: string;
+}
+
+export interface SetSupplierActiveResponse {
+  success: boolean;
+  supplier_id?: string;
+  is_active?: boolean;
+  code?: PurchaseErrorCode | RpcAuthErrorCode | string;
+  error?: string;
+}
+
+/** Cabeçalho enviado em `p_invoice` de `register_purchase_entry`. */
+export interface PurchaseInvoicePayload {
+  invoice_number: string;
+  series?: string | null;
+  access_key?: string | null;
+  /** `YYYY-MM-DD`; não pode ser futura. */
+  issued_at: string;
+  freight?: number;
+  other_costs?: number;
+  discount?: number;
+  xml_total?: number | null;
+  notes?: string | null;
+}
+
+/** Item enviado em `p_items` de `register_purchase_entry`, na ordem da nota. */
+export interface PurchaseItemPayload {
+  product_id: string;
+  invoice_qty: number;
+  conversion_factor?: number;
+  unit_cost: number;
+  supplier_code?: string | null;
+  description?: string | null;
+  invoice_unit?: string | null;
+}
+
+export interface RegisterPurchaseEntryResponse {
+  success: boolean;
+  invoice_id?: string;
+  items_total?: number;
+  total_amount?: number;
+  items_count?: number;
+  /** Linha do item com problema (1-based), nos erros de item. */
+  line?: number;
+  code?: PurchaseErrorCode | RpcAuthErrorCode | string;
+  error?: string;
+}
+
+export interface AttachPurchaseFileResponse {
+  success: boolean;
+  file_id?: string;
+  code?: PurchaseErrorCode | RpcAuthErrorCode | string;
+  error?: string;
+}
+
+export interface ReversePurchaseEntryResponse {
+  success: boolean;
+  invoice_id?: string;
+  reversed_items?: number;
+  product_id?: string;
+  product_name?: string;
+  available?: number;
+  required?: number;
+  code?: PurchaseErrorCode | RpcAuthErrorCode | string;
+  error?: string;
+}
