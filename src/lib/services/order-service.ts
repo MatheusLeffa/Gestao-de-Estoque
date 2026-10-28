@@ -14,6 +14,8 @@ import type {
   ApplyTriageItemPayload,
   ApplyTriageResponse,
   RestaurantRecommendationsResponse,
+  MissingItemInput,
+  MissingItemPayload,
 } from '@/types/database';
 
 // ─── Transições de Status Permitidas (máquina de estados) ────────────────────
@@ -133,6 +135,8 @@ export interface TransitionStatusParams {
   reason?: string;
   completionType?: 'TOTAL' | 'PARCIAL' | 'NAO_ENTREGUE';
   delayReason?: string;
+  /** Obrigatório em `CONCLUIDO_PARCIAL`: o que faltou em cada item. */
+  missingItems?: MissingItemInput[];
 }
 
 export interface TransitionStatusResult {
@@ -152,16 +156,24 @@ export async function transitionOrderStatus(params: TransitionStatusParams): Pro
     const res = mockStore.transitionOrderStatus(
       params.orderId,
       params.toStatus,
-      params.delayReason ?? params.reason
+      params.delayReason ?? params.reason,
+      params.missingItems
     );
     return { success: res.success, error: res.error };
   }
+
+  // p_missing_items só vai quando há faltas: sem ele, as demais transições
+  // continuam resolvendo pelo default da RPC.
+  const missingPayload: MissingItemPayload[] | undefined = params.missingItems?.map(
+    ({ itemId, missingQty }) => ({ item_id: itemId, missing_qty: missingQty })
+  );
 
   const { data, error } = await supabase.rpc('transition_order_status', {
     p_order_id: params.orderId,
     p_new_status: params.toStatus,
     p_reason: params.delayReason ?? params.reason ?? null,
     p_completion_type: params.completionType ?? null,
+    ...(missingPayload ? { p_missing_items: missingPayload } : {}),
   });
 
   if (error) {
