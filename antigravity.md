@@ -27,6 +27,7 @@
 - [state-machine.md](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/docs/state-machine.md) — Máquina de estados completa, condições de guarda e eventos.
 - [personas-and-ux.md](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/docs/personas-and-ux.md) — Diretrizes de UX Mobile-First, Bottom Sheets e telas de cada persona.
 - [001-atomic-rpc-concurrency.md](file:///c:/Users/mathe/source/repos/Google%20AntiGravity/Gestao%20de%20Estoque/docs/adr/001-atomic-rpc-concurrency.md) — ADR sobre a reserva atômica de saldo via `SELECT ... FOR UPDATE`.
+- [002-compras-custo-medio-e-nfe.md](docs/adr/002-compras-custo-medio-e-nfe.md) — ADR sobre custo médio ponderado móvel e leitura da NF-e no navegador.
 
 ---
 
@@ -74,7 +75,7 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
 - **Gestão de Insumos & Reabastecimento:**
   - Barra de busca instantânea por nome do insumo.
   - Filtros por categoria (*Hortifrúti, Carnes, Bebidas, etc.*), filtro rápido `[⚠️ Apenas Estoque Baixo]` e filtro inteligente `[🔮 Reposição Sugerida]`.
-  - Modal rápido de entrada/reabastecimento manual de saldo no depósito.
+  - **Ajuste manual** de saldo (antigo reabastecimento), só para entradas sem nota, com motivo obrigatório em lista fixa mais `Outro (descrever)`.
   - **Previsibilidade de Estoque & Plano de Reposição (RPC `get_stock_forecasting`):**
     - Análise contínua das saídas dos últimos 14 dias para calcular a média diária de consumo (*burn rate*).
     - Projeção de esgotamento (*days until stockout* e data prevista de término).
@@ -82,6 +83,14 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
     - Cálculo de lote de compra sugerido ($S_{alvo} = (C_{dia} \times 14) + \text{min\_stock\_alert}$).
     - Ação de reabastecimento em 1 clique: botão direto que abre o `RestockModal` com a quantidade sugerida pré-preenchida.
     - Modal dedicado `StockForecastModal` (Plano de Reposição & Previsibilidade) e botão de acesso rápido no header.
+- **🧾 Compras e Notas Fiscais (business-rules seção 10):**
+  - **Entrada por nota:** cada compra é registrada como uma nota fiscal com vários itens, e todos entram no estoque na mesma transação (`register_purchase_entry`, movimentação `ENTRADA_COMPRA`).
+  - Fornecedores cadastrados (CNPJ validado, inclusive o alfanumérico), dados da nota (número, série, emissão, chave de acesso) e bloqueio de nota duplicada.
+  - Cada item liga a linha da nota a um insumo, com **fator de conversão** (ex.: caixa com 12 L → 12 L no estoque) e custo unitário.
+  - **Custo médio ponderado móvel** e último custo por insumo, em `product_costs`, visíveis só para `estoque` e `admin`.
+  - **Arquivos da nota** (PDF, foto ou XML, até 10 MB) no bucket privado `purchase-invoices`, abertos por link temporário.
+  - **Importação do XML da NF-e** no navegador, com memória da associação produto da nota → insumo por fornecedor.
+  - **Estorno de entrada** com motivo obrigatório, só com saldo suficiente (`ESTORNO_COMPRA`).
 - **Gestão do Catálogo de Produtos (CRUD):**
   - **Cadastro e edição:** o depósito cria novos insumos e configura nome, categoria, unidade, saldo inicial, ponto de reposição (`min_stock_alert`) e **foto do insumo** (`image_url`). A edição permite adicionar, recortar (proporção 1:1 via Canvas nativo mobile-first) ou remover a imagem, e não altera saldo — saldo só muda por reabastecimento ou movimentação de pedido.
   - **Identificação Visual & Placeholders:** cards do depósito e catálogo do restaurante exibem miniatura fotográfica de 72x72px com cantos arredondados, ou ícones temáticos vetoriais por categoria (Carnes, Hortifrúti, Laticínios, Mercearia, Bebidas) quando sem foto.
@@ -317,6 +326,12 @@ O índice dos subagentes vive no [`AGENTS.md`](AGENTS.md). A definição complet
 - [ ] **Fase 6: Testes de QA, Concorrência, Versionamento & Deploy na Vercel**
   - Testes de concorrência simultânea, validação em viewports mobile, esteira de verificação/build e checklist de deploy na Vercel.
   - *Agentes:* `verifier` + Tech Lead.
+
+- [ ] **Fase 7: Compras e Notas Fiscais no Almoxarifado** (business-rules seção 10)
+  - [ ] **7.A** Banco: fornecedores, notas, itens, anexos, custos, bucket privado e RPCs atômicas.
+  - [ ] **7.B** Aba Compras: entrada manual, anexos, lista, detalhe, estorno e fornecedores.
+  - [ ] **7.C** Importação do XML da NF-e com memória do de-para por fornecedor.
+  - [ ] **7.D** Custo no catálogo do estoque e gasto por período/fornecedor no painel do Admin.
 
 ---
 
