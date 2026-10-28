@@ -121,9 +121,44 @@ group by p.id;
 ## 5. Conferência na Entrega (Check-in do Restaurante)
 
 Ao receber o pedido físico na cozinha, o restaurante finaliza o ciclo com um dos 3 desfechos:
-1. `ENTREGUE_TOTAL`: Todos os itens foram recebidos conforme solicitado. O pedido passa para `CONCLUIDO_TOTAL`.
-2. `ENTREGUE_PARCIAL`: Houve faltas na entrega. O pedido passa para `CONCLUIDO_PARCIAL` e o restaurante deve informar a justificativa obrigatória.
-3. `NAO_ENTREGUE`: Pedido recusado, extraviado ou totalmente avariado. O pedido passa para `CONCLUIDO_NAO_ENTREGUE` com justificativa obrigatória.
+1. `ENTREGUE_TOTAL`: Todos os itens foram recebidos conforme enviado. O pedido passa para `CONCLUIDO_TOTAL` e `delivered_qty = approved_qty` em todos os itens.
+2. `ENTREGUE_PARCIAL`: Houve faltas na entrega. O pedido passa para `CONCLUIDO_PARCIAL`. O restaurante **detalha item a item o que ficou de fora** (`missing_qty`, entre 0 e `approved_qty`) e informa a justificativa obrigatória. O sistema grava `delivered_qty = approved_qty − missing_qty`. Pelo menos um item precisa ter falta; caso contrário, a entrega é total.
+3. `NAO_ENTREGUE`: Pedido recusado, extraviado ou totalmente avariado. O pedido passa para `CONCLUIDO_NAO_ENTREGUE` com justificativa obrigatória e `delivered_qty = 0` em todos os itens.
+
+O `delivered_qty` é o que efetivamente entra no estoque da cozinha (seção 5.A). O estoque central não é alterado na conferência: a quantidade aprovada já saiu dele na reserva.
+
+---
+
+## 5.A. Estoque da Cozinha (por restaurante)
+
+Cada restaurante tem um saldo próprio por insumo (`kitchen_stock`), separado do estoque central. Toda alteração gera um registro em `kitchen_movements`.
+
+### 5.A.1 Movimentações
+| Tipo | Quando | Efeito no saldo |
+| :--- | :--- | :--- |
+| `CONTAGEM_INICIAL` | Primeira contagem do restaurante | Define o saldo |
+| `ENTRADA_ENTREGA` | Conferência `CONCLUIDO_TOTAL` / `CONCLUIDO_PARCIAL` | **+** `delivered_qty` |
+| `PERDA` | Registro avulso de descarte, com motivo obrigatório | **−** quantidade |
+| `CONSUMO_APURADO` | Contagem em que o contado é menor que o saldo | **−** (saldo − contado) |
+| `AJUSTE_POSITIVO` | Contagem em que o contado é maior que o saldo | **+** (contado − saldo), sinalizado ao admin |
+
+### 5.A.2 Contagem inicial obrigatória
+- Enquanto o restaurante não fizer a contagem inicial, contagens diárias e perdas são recusadas (`KITCHEN_NOT_INITIALIZED`). Entregas confirmadas antes disso não creditam a cozinha.
+- Insumo não informado na contagem inicial começa com saldo 0.
+
+### 5.A.3 Contagem diária
+- Esperada **todos os dias**; pode ser feita **mais de uma vez no mesmo dia**. Cada contagem compara o contado com o saldo atual (que já inclui entregas e perdas desde a anterior).
+- **Insumo não contado:** presume-se que não houve consumo, e o saldo é mantido sem movimentação.
+- A tela sinaliza quando ainda não houve contagem no dia.
+
+### 5.A.4 Perdas
+- Motivos: *Vencido*, *Estragado / deteriorado*, *Erro de preparo*, *Avaria no armazenamento*, ou *Outro (descrever)* com texto livre.
+- Perda maior que o saldo é recusada. Perdas não contam como consumo.
+
+### 5.A.5 Invariante da cozinha
+> **saldo = contagem inicial + entregas − perdas − consumo apurado + ajustes positivos**
+
+O saldo nunca fica negativo (`CHECK (quantity >= 0)`), e toda escrita acontece em RPC com `SELECT ... FOR UPDATE` nas linhas do restaurante.
 
 ---
 
@@ -233,16 +268,17 @@ Para que as cozinhas dos restaurantes possam solicitar insumos proativamente ao 
 - **Intervalo de Reabastecimento:** Identifica a data do último pedido do insumo pela unidade (`last_ordered_at`) e calcula os dias decorridos (`days_since_last_order`).
 - **Insumos considerados:** produtos ativos que o restaurante pediu na janela **ou** que estão com `current_stock <= min_stock_alert`.
 - **Disponibilidade no Depósito Central:** Apenas insumos com `current_stock > 0` são recomendados; itens esgotados ficam fora da lista.
+- **Supressão de Pedidos em Andamento e Recentes:** Insumos com pedido ativo em andamento (`ABERTO`, `EM_ANALISE`, `EM_ATRASO`, `EM_TRANSITO`, `CANCELAMENTO_PENDENTE`) são suprimidos das sugestões, pois a reposição já está a caminho. Insumos com pedido concluído recentemente (`days_since_last_order < 2.0` dias) também são suprimidos (salvo estoque central crítico), pois a cozinha acabou de ser abastecida com a cobertura de consumo.
 
 ### 8.2 Critérios Normativos de Urgência da Cozinha
 Avaliados nesta ordem:
 1. `URGENTE`:
    - O estoque central está baixo, mas não zerado (`0 < current_stock <= min_stock_alert`); **OU**
-   - O restaurante pediu o insumo na janela e já se passaram 3 dias ou mais desde o último pedido (`days_since_last_order >= 3`).
+   - O restaurante pediu o insumo na janela e já se passaram 4 dias ou mais desde o último pedido (`days_since_last_order >= 4`).
 2. `RECOMENDADO`:
-   - O restaurante pediu o insumo na janela (`order_count >= 1`) e não se enquadra em `URGENTE`.
+   - O restaurante pediu o insumo na janela e já se passaram entre 2 e 4 dias desde o último pedido (`2.0 <= days_since_last_order < 4`).
 3. `ROTINA`:
-   - O restaurante não pediu o insumo na janela; ele entra apenas por estar abaixo do ponto de reposição, mas não é `URGENTE`.
+   - O restaurante não pediu o insumo na janela; ele entra apenas por estar abaixo do ponto de reposição no Depósito Central, mas não é `URGENTE`.
 
 ### 8.3 Quantidade Sugerida de Pedido ($Q_{pedido}$)
 - Com consumo na janela ($C_{dia} > 0$): cobertura de **5 dias** de consumo da unidade, com mínimo de 1:

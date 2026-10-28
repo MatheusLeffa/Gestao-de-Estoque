@@ -20,6 +20,7 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  ChefHat,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { chimeService } from '@/lib/audio/chime';
@@ -38,16 +39,24 @@ import { CartBottomSheet, type CartItem } from '@/components/restaurante/CartBot
 import { OrderTimelineModal } from '@/components/restaurante/OrderTimelineModal';
 import { CheckInDeliveryModal } from '@/components/restaurante/CheckInDeliveryModal';
 import { RestaurantForecastModal } from '@/components/restaurante/RestaurantForecastModal';
+import { KitchenPanel } from '@/components/restaurante/KitchenPanel';
+import { fetchKitchenStock } from '@/lib/services/kitchen-service';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { ProductThumbnail } from '@/components/ui/ProductThumbnail';
 
-import type { Product, Order, CompletionType, RestaurantRecommendationItem } from '@/types/database';
+import type {
+  Product,
+  Order,
+  CompletionType,
+  RestaurantRecommendationItem,
+  MissingItemInput,
+} from '@/types/database';
 import { SortControl } from '@/components/ui/SortControl';
 import { sortItems, dateValue, type SortDirection } from '@/lib/utils/sorting';
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 
-type Tab = 'catalogo' | 'pedidos';
+type Tab = 'catalogo' | 'pedidos' | 'cozinha';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -63,12 +72,13 @@ function formatRelative(iso: string) {
 
 // ─── Componente Principal ─────────────────────────────────────────────────────
 
-type RestProductSortKey = 'name' | 'stock' | 'category';
+type RestProductSortKey = 'name' | 'stock' | 'kitchen' | 'category';
 type RestOrderSortKey = 'created_at' | 'updated_at' | 'status';
 
 const REST_PRODUCT_SORT_OPTIONS: { value: RestProductSortKey; label: string }[] = [
   { value: 'name', label: 'Nome' },
   { value: 'stock', label: 'Saldo disponível' },
+  { value: 'kitchen', label: 'Saldo na cozinha' },
   { value: 'category', label: 'Categoria' },
 ];
 
@@ -112,6 +122,10 @@ export default function RestaurantePage() {
   const [timelineOrder, setTimelineOrder] = useState<Order | null>(null);
   const [checkInOrder, setCheckInOrder] = useState<Order | null>(null);
   const [isConfirmingDelivery, setIsConfirmingDelivery] = useState(false);
+  // Incrementado quando uma entrega confirmada pode ter creditado a cozinha
+  const [kitchenRefreshKey, setKitchenRefreshKey] = useState(0);
+  // Saldo da cozinha por insumo, exibido no catálogo; null enquanto não houver contagem inicial
+  const [kitchenQty, setKitchenQty] = useState<Map<string, number> | null>(null);
 
   // ── Forecast / Recommendations state ──
   const [recommendations, setRecommendations] = useState<RestaurantRecommendationItem[]>([]);
@@ -143,11 +157,25 @@ export default function RestaurantePage() {
     setLoadingRecommendations(false);
   }, [restaurantId]);
 
+  const loadKitchenQty = useCallback(async () => {
+    const res = await fetchKitchenStock(restaurantId);
+    if (res.success && res.initialized && res.items) {
+      setKitchenQty(new Map(res.items.map((it) => [it.product_id, it.quantity])));
+    } else {
+      setKitchenQty(null);
+    }
+  }, [restaurantId]);
+
   useEffect(() => {
     loadProducts();
     loadOrders();
     loadRecommendations();
   }, [loadProducts, loadOrders, loadRecommendations]);
+
+  // Contagens e perdas acontecem na aba Cozinha; entregas mudam o refreshKey
+  useEffect(() => {
+    if (activeTab === 'catalogo') loadKitchenQty();
+  }, [activeTab, kitchenRefreshKey, loadKitchenQty]);
 
   const handleAddBatchToCart = (items: { productId: string; quantity: number }[]) => {
     setCart((prev) => {
@@ -194,6 +222,7 @@ export default function RestaurantePage() {
         { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` },
         () => {
           loadOrders();
+          loadRecommendations();
           if (soundEnabled) chimeService.playSuccessPing();
         }
       )
@@ -202,6 +231,7 @@ export default function RestaurantePage() {
         { event: 'UPDATE', schema: 'public', table: 'products' },
         () => {
           loadProducts();
+          loadRecommendations();
         }
       )
       .subscribe();
@@ -209,7 +239,14 @@ export default function RestaurantePage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [restaurantId, soundEnabled, loadOrders, loadProducts]);
+  }, [restaurantId, soundEnabled, loadOrders, loadProducts, loadRecommendations]);
+
+  // Recarrega previsões sempre que o operador volta para a aba de catálogo
+  useEffect(() => {
+    if (activeTab === 'catalogo') {
+      loadRecommendations();
+    }
+  }, [activeTab, loadRecommendations]);
 
   // ─── Cart Handlers ────────────────────────────────────────────────────────
 
@@ -268,6 +305,7 @@ export default function RestaurantePage() {
       setActiveTab('pedidos');
       loadOrders();
       loadProducts();
+      loadRecommendations();
       setTimeout(() => setOrderFeedback(null), 5000);
     } else {
       setOrderFeedback({
@@ -281,7 +319,11 @@ export default function RestaurantePage() {
 
   // ─── Delivery Check-in ────────────────────────────────────────────────────
 
-  const handleConfirmDelivery = async (completionType: CompletionType, reason?: string) => {
+  const handleConfirmDelivery = async (
+    completionType: CompletionType,
+    reason?: string,
+    missingItems?: MissingItemInput[]
+  ) => {
     if (!checkInOrder) return;
     setIsConfirmingDelivery(true);
 
@@ -298,14 +340,25 @@ export default function RestaurantePage() {
       toStatus,
       reason,
       completionType,
+      missingItems,
     });
 
     setIsConfirmingDelivery(false);
     if (result.success) {
       if (soundEnabled) chimeService.playSuccessPing();
       setCheckInOrder(null);
+      setKitchenRefreshKey((k) => k + 1);
       loadOrders();
+      loadRecommendations();
+    } else {
+      setCheckInOrder(null);
+      showFeedback('error', `❌ ${result.error ?? 'Não foi possível confirmar a entrega.'}`);
     }
+  };
+
+  const showFeedback = (type: 'success' | 'error', message: string) => {
+    setOrderFeedback({ type, message });
+    setTimeout(() => setOrderFeedback(null), 5000);
   };
 
   // ─── Cancel Order ─────────────────────────────────────────────────────────
@@ -316,6 +369,7 @@ export default function RestaurantePage() {
     if (result.success) {
       if (soundEnabled) chimeService.playSuccessPing();
       loadOrders();
+      loadRecommendations();
     } else {
       alert(result.error ?? 'Não foi possível cancelar.');
     }
@@ -345,6 +399,8 @@ export default function RestaurantePage() {
           return p.name;
         case 'stock':
           return p.current_stock;
+        case 'kitchen':
+          return kitchenQty?.get(p.id) ?? 0;
         case 'category':
           return p.category;
       }
@@ -431,8 +487,9 @@ export default function RestaurantePage() {
                   : 'text-slate-500 hover:text-slate-700'
               }`}
             >
-              <ShoppingBag className="w-3.5 h-3.5" />
-              Catálogo de Insumos
+              <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
+              <span className="sm:hidden">Catálogo</span>
+              <span className="hidden sm:inline">Catálogo de Insumos</span>
             </button>
             <button
               onClick={() => setActiveTab('pedidos')}
@@ -442,13 +499,26 @@ export default function RestaurantePage() {
                   : 'text-slate-500 hover:text-slate-700'
               }`}
             >
-              <ClipboardList className="w-3.5 h-3.5" />
-              Meus Pedidos
+              <ClipboardList className="w-3.5 h-3.5 shrink-0" />
+              <span className="sm:hidden">Pedidos</span>
+              <span className="hidden sm:inline">Meus Pedidos</span>
               {activeOrders.length > 0 && (
                 <span className="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
                   {activeOrders.length}
                 </span>
               )}
+            </button>
+            <button
+              onClick={() => setActiveTab('cozinha')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold rounded-xl transition-all min-h-[44px] ${
+                activeTab === 'cozinha'
+                  ? 'bg-white text-emerald-700 shadow-xs'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <ChefHat className="w-3.5 h-3.5 shrink-0" />
+              <span className="sm:hidden">Cozinha</span>
+              <span className="hidden sm:inline">Minha Cozinha</span>
             </button>
           </div>
         </div>
@@ -626,6 +696,24 @@ export default function RestaurantePage() {
                             {p.current_stock} {p.unit}
                           </span>
                         </div>
+                        <div className="mt-1 flex items-center justify-between text-xs">
+                          <span className="text-slate-500 flex items-center gap-1">
+                            <ChefHat className="w-3 h-3" /> Na sua cozinha:
+                          </span>
+                          {kitchenQty ? (
+                            <span className={`font-bold ${(kitchenQty.get(p.id) ?? 0) > 0 ? 'text-emerald-700' : 'text-slate-400'}`}>
+                              {Math.round((kitchenQty.get(p.id) ?? 0) * 1000) / 1000} {p.unit}
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('cozinha')}
+                              className="text-[11px] font-semibold text-emerald-700 underline underline-offset-2"
+                            >
+                              Fazer contagem inicial
+                            </button>
+                          )}
+                        </div>
 
                         {/* Recommendation badge if this item has predicted need */}
                         {rec && (
@@ -688,6 +776,13 @@ export default function RestaurantePage() {
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── COZINHA TAB ── */}
+        {activeTab === 'cozinha' && (
+          <div className="flex-1 overflow-y-auto px-3 sm:px-6 space-y-3">
+            <KitchenPanel restaurantId={restaurantId} refreshKey={kitchenRefreshKey} onFeedback={showFeedback} />
           </div>
         )}
 

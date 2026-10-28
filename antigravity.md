@@ -104,13 +104,14 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
 - **Catálogo de Insumos & Checklist de Pedido:**
   - Barra de busca instantânea e pílulas de filtro por categoria.
   - Exibição de saldo em tempo real (bloqueio visual para não permitir selecionar quantidade superior ao saldo disponível).
+  - Cada card mostra também o **saldo na cozinha do próprio restaurante** (seção Minha Cozinha), com ordenação por esse saldo. Antes da contagem inicial, o card leva o operador a fazê-la.
   - Carrinho touch-friendly (Bottom Sheet no mobile) com cálculo automático e validação de checkout.
 - **🔮 Previsibilidade de Reposição da Cozinha (Reorder Intelligence):**
   - Banner inteligente no topo do catálogo destacando insumos em nível crítico e contagem de itens ideais para repor hoje.
   - Filtro em 1 clique `🔮 Sugeridos (N)` para isolar insumos previstos para reabastecimento.
   - Badges individuais nos cards de insumos indicando sugestão de pedido (`+X un`) com botão de adição rápida `[+ Sugerido]`.
   - **Modal de Previsão (`RestaurantForecastModal`):** Gaveta inferior que lista os itens recomendados com justificativa detalhada (dias desde o último pedido, urgência `URGENTE`/`RECOMENDADO`/`ROTINA`), controle de quantidade por item e botão "Adicionar Todos ao Pedido".
-  - **Cálculo no PostgreSQL:** RPC `get_restaurant_recommendations(p_restaurant_id, p_days_window)` que projeta o ritmo de consumo exclusivo da unidade e limita o lote ao saldo disponível no Depósito Central.
+  - **Cálculo no PostgreSQL & Mock:** RPC `get_restaurant_recommendations(p_restaurant_id, p_days_window)` e `mockStore` projetam o ritmo de consumo exclusivo da unidade, limitam o lote ao saldo disponível no Depósito Central e **suprimem automaticamente** insumos que já possuem pedidos ativos em trânsito/separação ou que foram recebidos recentemente (`< 2 dias`), garantindo que a lista reflita apenas insumos que necessitam de nova reposição.
 - **Acompanhamento do Pedido & Linha do Tempo (Audit Log):**
   - Timeline visual estilo app de entrega com histórico completo de cada mudança de status, horários e motivos de atraso.
 - **Conferência Enriquecida na Entrega (Check-in):**
@@ -119,8 +120,16 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
   - Exibição de observações gerais do depósito, se houver.
   - Finalização do pedido na entrega marcando o desfecho:
     - `ENTREGUE_TOTAL` (Todos os itens recebidos).
-    - `ENTREGUE_PARCIAL` (Recebimento com faltas + campo obrigatório de justificativa).
+    - `ENTREGUE_PARCIAL` (Recebimento com faltas detalhadas **item a item** — `missing_qty` entre 0 e o enviado, com pelo menos uma falta — + campo obrigatório de justificativa). O sistema grava `delivered_qty = approved_qty − missing_qty`.
     - `NAO_ENTREGUE` (Recusa ou extravio + motivo).
+  - O `delivered_qty` é o que entra no estoque da cozinha (`ENTRADA_ENTREGA`), se ela já tiver feito a contagem inicial.
+- **🧑‍🍳 Minha Cozinha (Estoque por Restaurante — business-rules seção 5.A):**
+  - Aba própria com saldo de cada insumo na cozinha, separado do Depósito Central, e ledger em `kitchen_movements`.
+  - **Contagem inicial obrigatória:** onboarding com checklist; antes dela, contagens diárias e perdas são recusadas (`KITCHEN_NOT_INITIALIZED`) e entregas não creditam a cozinha. Insumo não contado começa em 0.
+  - **Contagem diária (Bottom Sheet):** pode ser feita várias vezes ao dia; mostra o saldo esperado e a prévia do consumo de cada insumo. `consumo = esperado − contado` (`CONSUMO_APURADO`); contado acima do esperado vira `AJUSTE_POSITIVO`, sinalizado ao admin. Insumo em branco mantém o saldo, sem movimento.
+  - Indicador "Contagem de hoje realizada" / "Pendente de contagem hoje" (fuso America/Sao_Paulo) e cards com cobertura estimada em dias (média de consumo apurado dos últimos 7 dias).
+  - **Registrar Perda (Bottom Sheet):** insumo, quantidade (até o saldo) e motivo fixo — *Vencido, Estragado / deteriorado, Erro de preparo, Avaria no armazenamento* ou `Outro (descrever)`. Perda não conta como consumo.
+  - Invariante: `saldo = contagem inicial + entregas − perdas − consumo apurado + ajustes positivos`, nunca negativo. Escrita só pelas RPCs `submit_kitchen_count`, `register_kitchen_loss` e `transition_order_status`.
 - **Cancelamento:** Solicitação de cancelamento disponível até a fase EM_ANALISE.
 
 ### 👑 C. Administrador (Gestão & Analytics)

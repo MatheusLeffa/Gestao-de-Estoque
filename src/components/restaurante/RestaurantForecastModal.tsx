@@ -51,6 +51,17 @@ export const RestaurantForecastModal: React.FC<RestaurantForecastModalProps> = (
   // Filtro interno de urgência
   const [filter, setFilter] = useState<'TODOS' | 'URGENTE' | 'RECOMENDADO'>('TODOS');
 
+  // Mantém os itens selecionados e quantidades alinhados sempre que o modal abre ou a lista é atualizada
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const initial: Record<string, number> = {};
+    recommendations.forEach((item) => {
+      initial[item.product_id] = item.recommended_order_qty;
+    });
+    setQuantities(initial);
+    setSelectedIds(new Set(recommendations.map((i) => i.product_id)));
+  }, [isOpen, recommendations]);
+
   if (!isOpen) return null;
 
   const handleToggleSelect = (productId: string) => {

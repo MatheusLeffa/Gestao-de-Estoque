@@ -16,13 +16,13 @@ import {
   FileText,
   MessageSquare,
 } from 'lucide-react';
-import type { Order, CompletionType } from '@/types/database';
+import type { Order, CompletionType, MissingItemInput } from '@/types/database';
 
 interface CheckInDeliveryModalProps {
   isOpen: boolean;
   order: Order | null;
   onClose: () => void;
-  onConfirm: (completionType: CompletionType, reason?: string) => Promise<void>;
+  onConfirm: (completionType: CompletionType, reason?: string, missingItems?: MissingItemInput[]) => Promise<void>;
   isSubmitting?: boolean;
 }
 
@@ -70,14 +70,42 @@ export function CheckInDeliveryModal({
   const [selected, setSelected] = useState<CompletionType | null>(null);
   const [reason, setReason] = useState('');
   const [reasonError, setReasonError] = useState('');
+  // Entrega parcial: quanto faltou de cada item, como digitado (string vazia = 0)
+  const [missing, setMissing] = useState<Record<string, string>>({});
+  const [missingError, setMissingError] = useState('');
 
   if (!isOpen || !order) return null;
 
   const items = order.order_items ?? [];
   const selectedOption = DELIVERY_OPTIONS.find((o) => o.type === selected);
+  const sentQty = (item: (typeof items)[number]) =>
+    item.approved_qty !== null ? Number(item.approved_qty) : Number(item.requested_qty);
+  const missingQty = (itemId: string) => Number((missing[itemId] ?? '').replace(',', '.') || 0);
 
   const handleConfirm = async () => {
     if (!selected) return;
+
+    let missingItems: MissingItemInput[] | undefined;
+    if (selected === 'PARCIAL') {
+      const invalid = items.find((it) => {
+        const q = missingQty(it.id);
+        return !Number.isFinite(q) || q < 0 || q > sentQty(it);
+      });
+      if (invalid) {
+        setMissingError(
+          `A falta de "${invalid.product?.name ?? 'insumo'}" deve ficar entre 0 e ${sentQty(invalid)} ${invalid.product?.unit ?? ''}.`
+        );
+        return;
+      }
+      missingItems = items
+        .filter((it) => missingQty(it.id) > 0)
+        .map((it) => ({ itemId: it.id, missingQty: missingQty(it.id) }));
+      if (missingItems.length === 0) {
+        setMissingError('Informe a quantidade que faltou em pelo menos um item. Se nada faltou, use Entrega Total.');
+        return;
+      }
+    }
+    setMissingError('');
 
     if (selectedOption?.requiresReason && !reason.trim()) {
       setReasonError('Por favor, informe o motivo para prosseguir com a conferência.');
@@ -85,7 +113,7 @@ export function CheckInDeliveryModal({
     }
 
     setReasonError('');
-    await onConfirm(selected, reason.trim() || undefined);
+    await onConfirm(selected, reason.trim() || undefined, missingItems);
   };
 
   const handleClose = () => {
@@ -93,6 +121,8 @@ export function CheckInDeliveryModal({
       setSelected(null);
       setReason('');
       setReasonError('');
+      setMissing({});
+      setMissingError('');
       onClose();
     }
   };
@@ -163,7 +193,9 @@ export function CheckInDeliveryModal({
               {items.map((item) => {
                 const product = item.product;
                 const requested = Number(item.requested_qty);
-                const approved = item.approved_qty !== null ? Number(item.approved_qty) : requested;
+                const approved = sentQty(item);
+                const itemMissing = missingQty(item.id);
+                const itemMissingInvalid = !Number.isFinite(itemMissing) || itemMissing < 0 || itemMissing > approved;
                 const isReduced = approved < requested;
                 const isZero = approved === 0;
 
@@ -222,6 +254,37 @@ export function CheckInDeliveryModal({
                         )}
                       </div>
                     )}
+
+                    {/* Entrega parcial: quanto deste item não chegou */}
+                    {selected === 'PARCIAL' && approved > 0 && (
+                      <div className="mt-2 pt-2 border-t border-slate-200/70 flex items-center justify-between gap-3">
+                        <label htmlFor={`missing-${item.id}`} className="text-[11px] font-semibold text-slate-600">
+                          Faltou ({product?.unit}):
+                          {itemMissing > 0 && !itemMissingInvalid && (
+                            <span className="block font-normal text-emerald-700">
+                              Recebido: {Math.round((approved - itemMissing) * 1000) / 1000} {product?.unit}
+                            </span>
+                          )}
+                        </label>
+                        <input
+                          id={`missing-${item.id}`}
+                          type="number"
+                          inputMode="decimal"
+                          min={0}
+                          max={approved}
+                          step="any"
+                          placeholder="0"
+                          value={missing[item.id] ?? ''}
+                          onChange={(e) => {
+                            setMissing((prev) => ({ ...prev, [item.id]: e.target.value }));
+                            setMissingError('');
+                          }}
+                          className={`w-24 h-11 px-3 text-sm text-right font-bold rounded-xl border focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 ${
+                            itemMissingInvalid ? 'border-red-400 bg-red-50' : 'border-slate-200 bg-white'
+                          }`}
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -246,6 +309,8 @@ export function CheckInDeliveryModal({
                       setSelected(opt.type);
                       setReason('');
                       setReasonError('');
+                      setMissing({});
+                      setMissingError('');
                     }}
                     className={`w-full flex items-center gap-3 p-3.5 rounded-2xl border-2 text-left transition-all min-h-[64px] active:scale-[0.98] ${
                       isSelected
@@ -268,6 +333,13 @@ export function CheckInDeliveryModal({
                 );
               })}
             </div>
+
+            {selected === 'PARCIAL' && (
+              <p className={`text-xs flex items-start gap-1.5 ${missingError ? 'text-red-600' : 'text-amber-800'}`}>
+                <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                {missingError || 'Informe acima, item a item, quanto ficou de fora. Só o que chegou entra no estoque da cozinha.'}
+              </p>
+            )}
 
             {/* Input de motivo para Parcial ou Não Entregue */}
             {selectedOption?.requiresReason && (

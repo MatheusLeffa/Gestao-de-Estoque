@@ -358,4 +358,135 @@ export interface RestaurantRecommendationsResponse {
   error?: string;
 }
 
+// ─── Estoque da Cozinha (business-rules seção 5.A) ──────────────────────────
+
+/** Tipos de `kitchen_movements.type`. Entradas têm quantidade positiva; saídas, negativa. */
+export type KitchenMovementType =
+  | 'CONTAGEM_INICIAL'
+  | 'ENTRADA_ENTREGA'
+  | 'PERDA'
+  | 'CONSUMO_APURADO'
+  | 'AJUSTE_POSITIVO';
+
+/** Motivos fixos de perda; `Outro` exige descrição livre. */
+export type KitchenLossReason =
+  | 'Vencido'
+  | 'Estragado / deteriorado'
+  | 'Erro de preparo'
+  | 'Avaria no armazenamento'
+  | 'Outro';
+
+/** Códigos de erro das RPCs da cozinha e da conferência detalhada. */
+export type KitchenErrorCode =
+  | 'KITCHEN_NOT_INITIALIZED'
+  | 'ALREADY_INITIALIZED'
+  | 'EMPTY_COUNT'
+  | 'INVALID_PAYLOAD'
+  | 'DUPLICATE_PRODUCT'
+  | 'PRODUCT_NOT_FOUND'
+  | 'INVALID_QUANTITY'
+  | 'REASON_REQUIRED'
+  | 'INSUFFICIENT_KITCHEN_STOCK'
+  | 'MISSING_ITEMS_REQUIRED'
+  | 'ITEM_NOT_FOUND';
+
+/** Linha de `kitchen_stock` já unida ao catálogo, como devolvida por `get_kitchen_stock`. */
+export interface KitchenStockItem {
+  product_id: string;
+  name: string;
+  category: ProductCategory;
+  unit: string;
+  image_url: string | null;
+  /** Saldo atual na cozinha; 0 quando o insumo ainda não tem linha. */
+  quantity: number;
+  last_counted_at: string | null;
+  /** Média de CONSUMO_APURADO dos últimos 7 dias (ou desde a contagem inicial). */
+  avg_daily_consumption: number;
+}
+
+export interface KitchenCount {
+  id: string;
+  restaurant_id: string;
+  counted_by: string | null;
+  is_initial: boolean;
+  items_counted: number;
+  created_at: string;
+}
+
+export interface KitchenMovement {
+  id: string;
+  restaurant_id: string;
+  product_id: string;
+  type: KitchenMovementType;
+  quantity: number;
+  reason: string | null;
+  order_id: string | null;
+  count_id: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface KitchenStockResponse {
+  success: boolean;
+  initialized?: boolean;
+  initial_count_at?: string | null;
+  last_count_at?: string | null;
+  /** Se já houve contagem hoje, no fuso America/Sao_Paulo. */
+  counted_today?: boolean;
+  items?: KitchenStockItem[];
+  code?: KitchenErrorCode | RpcAuthErrorCode | string;
+  error?: string;
+}
+
+export interface KitchenCountItemPayload {
+  product_id: string;
+  counted_qty: number;
+}
+
+export interface SubmitKitchenCountPayload {
+  restaurantId: string;
+  /** Só os insumos contados; os demais mantêm o saldo. */
+  items: KitchenCountItemPayload[];
+  isInitial: boolean;
+}
+
+export interface SubmitKitchenCountResponse {
+  success: boolean;
+  count_id?: string;
+  consumed_total?: number;
+  adjusted_items?: number;
+  items_counted?: number;
+  code?: KitchenErrorCode | RpcAuthErrorCode | string;
+  error?: string;
+}
+
+export interface RegisterKitchenLossPayload {
+  restaurantId: string;
+  productId: string;
+  quantity: number;
+  /** Texto final gravado: o motivo fixo, ou `Outro: <descrição>`. */
+  reason: string;
+}
+
+export interface RegisterKitchenLossResponse {
+  success: boolean;
+  product_id?: string;
+  new_quantity?: number;
+  available?: number;
+  code?: KitchenErrorCode | RpcAuthErrorCode | string;
+  error?: string;
+}
+
+/** Falta informada item a item na conferência `CONCLUIDO_PARCIAL`. */
+export interface MissingItemInput {
+  itemId: string;
+  missingQty: number;
+}
+
+/** Formato enviado em `p_missing_items` de `transition_order_status`. */
+export interface MissingItemPayload {
+  item_id: string;
+  missing_qty: number;
+}
+
 

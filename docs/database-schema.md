@@ -173,6 +173,41 @@ erDiagram
 
 > RLS: o usuário lê só a própria linha (`id = auth.uid()`). Não há policy de escrita; perfis são criados pelo administrador via SQL (seção 4.4).
 
+### 2.8 `kitchen_stock`
+| Coluna | Tipo | Restrições | Descrição |
+| :--- | :--- | :--- | :--- |
+| `restaurant_id` | `UUID` | `PK`, `REFERENCES restaurants(id) ON DELETE CASCADE` | Restaurante dono do saldo |
+| `product_id` | `UUID` | `PK`, `REFERENCES products(id) ON DELETE RESTRICT` | Insumo |
+| `quantity` | `NUMERIC` | `NOT NULL DEFAULT 0 CHECK (quantity >= 0)` | Saldo atual na cozinha |
+| `last_counted_at` | `TIMESTAMPTZ` | `NULL` | Última vez que o insumo foi contado |
+| `updated_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | Última alteração |
+
+### 2.9 `kitchen_counts`
+| Coluna | Tipo | Restrições | Descrição |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY DEFAULT gen_random_uuid()` | Identificador da contagem |
+| `restaurant_id` | `UUID` | `NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE` | Restaurante |
+| `counted_by` | `UUID` | `REFERENCES auth.users(id)` | Usuário que contou |
+| `is_initial` | `BOOLEAN` | `NOT NULL DEFAULT false` | Contagem inicial (única por restaurante, índice parcial) |
+| `items_counted` | `INT` | `NOT NULL` | Quantos insumos foram informados |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | Momento da contagem |
+
+### 2.10 `kitchen_movements`
+| Coluna | Tipo | Restrições | Descrição |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY DEFAULT gen_random_uuid()` | Identificador |
+| `restaurant_id` | `UUID` | `NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE` | Restaurante |
+| `product_id` | `UUID` | `NOT NULL REFERENCES products(id) ON DELETE RESTRICT` | Insumo |
+| `type` | `TEXT` | `CHECK (type IN ('CONTAGEM_INICIAL','ENTRADA_ENTREGA','PERDA','CONSUMO_APURADO','AJUSTE_POSITIVO'))` | Tipo (business-rules 5.A.1) |
+| `quantity` | `NUMERIC` | `NOT NULL` | Positiva para entradas, negativa para saídas |
+| `reason` | `TEXT` | `NULL` | Motivo da perda ou observação |
+| `order_id` | `UUID` | `REFERENCES orders(id)` | Pedido, em `ENTRADA_ENTREGA` |
+| `count_id` | `UUID` | `REFERENCES kitchen_counts(id)` | Contagem, em `CONTAGEM_INICIAL`/`CONSUMO_APURADO`/`AJUSTE_POSITIVO` |
+| `created_by` | `UUID` | `REFERENCES auth.users(id)` | Autor |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | Momento |
+
+> RLS das três tabelas: `SELECT` para `admin` ou para o próprio restaurante. Sem policy de escrita; tudo passa pelas RPCs.
+
 ---
 
 ## 3. Stored Procedures (RPCs)
@@ -183,13 +218,17 @@ erDiagram
    - Deduz `current_stock`, cria `orders`, `order_items`, `order_status_logs` e `stock_movements`.
    - Retorna JSON `{ success: boolean, order_id?: uuid, error?: string, code?: string }`.
 
-2. **`transition_order_status(p_order_id uuid, p_new_status text, p_reason text, p_completion_type text)`**:
+2. **`transition_order_status(p_order_id uuid, p_new_status text, p_reason text, p_completion_type text, p_missing_items jsonb DEFAULT NULL)`**:
    - Valida a transição de status permitida na máquina de estados.
    - Atualiza `orders.status`, `delay_reason`, `completion_type` e `updated_at`.
    - Se `p_new_status = 'CANCELADO'`, devolve atomicamente ao estoque o saldo retido —
      `COALESCE(approved_qty, requested_qty)`, **nunca `requested_qty` puro** — e grava `stock_movements`.
+   - Nos `CONCLUIDO_*`, grava `delivered_qty` (business-rules seção 5). Em `CONCLUIDO_PARCIAL`,
+     `p_missing_items` é obrigatório: `[{ item_id, missing_qty }]`, com `0 ≤ missing_qty ≤ approved_qty`
+     e pelo menos uma falta. Se a cozinha já fez a contagem inicial, credita `delivered_qty` em
+     `kitchen_stock` com `ENTRADA_ENTREGA`, na mesma transação.
    - Grava registro de auditoria em `order_status_logs`.
-   - Códigos de erro: `ORDER_NOT_FOUND`, `TERMINAL_STATE`.
+   - Códigos de erro: `ORDER_NOT_FOUND`, `TERMINAL_STATE`, `MISSING_ITEMS_REQUIRED`, `INVALID_QUANTITY`, `ITEM_NOT_FOUND`.
 
 3. **`restock_product(p_product_id uuid, p_quantity numeric, p_reason text)`**:
    - Incrementa `current_stock` em `products` e insere `stock_movements` com `ENTRADA_MANUAL`.
@@ -253,6 +292,19 @@ erDiagram
     - Recomendações de reposição para a cozinha do restaurante (docs/business-rules.md seção 8).
     - Somente leitura, `SECURITY DEFINER` com `search_path = public`. Analisa o histórico de pedidos daquela unidade específica, o tempo decorrido desde o último pedido e o estoque disponível no depósito central.
     - Retorna `{ success, restaurant_id, summary, items }`, onde `summary` traz `total_recommended`, `urgent_count` e `total_suggested_units`. Cada item inclui `product_id`, `name`, `category`, `unit`, `available_stock`, `avg_daily_consumption`, `last_ordered_at`, `days_since_last_order`, `recommended_order_qty`, `urgency` (`URGENTE`, `RECOMENDADO`, `ROTINA`) e `recommendation_reason`.
+
+13. **`get_kitchen_stock(p_restaurant_id uuid)`** — papéis `restaurante` (só o próprio) e `admin`:
+    - Somente leitura. Retorna `{ success, initialized, initial_count_at, last_count_at, counted_today, items }` (`counted_today` no fuso America/Sao_Paulo); cada item traz `product_id`, `name`, `category`, `unit`, `image_url`, `quantity` (0 sem linha), `last_counted_at` e `avg_daily_consumption` = soma de `CONSUMO_APURADO` dos últimos 7 dias ÷ dias desde a contagem inicial (entre 1 e 7).
+    - Itens: produtos ativos, mais inativos com saldo. Erro: `RESTAURANT_NOT_FOUND`.
+
+14. **`submit_kitchen_count(p_restaurant_id uuid, p_items jsonb, p_is_initial boolean DEFAULT false)`** — papéis `restaurante` (só o próprio) e `admin`:
+    - `p_items`: `[{ product_id, counted_qty }]`, `counted_qty >= 0`. Insumos fora da lista não são alterados.
+    - Trava as linhas de `kitchen_stock` do restaurante com `SELECT ... FOR UPDATE` em ordem de `product_id`.
+    - Inicial: só uma vez (`ALREADY_INITIALIZED`); grava `CONTAGEM_INICIAL`. Diária: exige inicial (`KITCHEN_NOT_INITIALIZED`); grava `CONSUMO_APURADO` ou `AJUSTE_POSITIVO` pela diferença.
+    - Retorna `{ success, count_id, consumed_total, adjusted_items }`.
+
+15. **`register_kitchen_loss(p_restaurant_id uuid, p_product_id uuid, p_quantity numeric, p_reason text)`** — papéis `restaurante` (só o próprio) e `admin`:
+    - Exige contagem inicial, `p_quantity > 0`, motivo não vazio e saldo suficiente (`INSUFFICIENT_KITCHEN_STOCK`). Grava `PERDA`.
 
 > **Segurança:** até a Migration B (seção 4.3) ser aplicada, só `get_stock_forecasting` e `get_restaurant_recommendations` fixam `search_path = public`, e todas as RPCs ainda podem ser executadas por `anon`. Esse aviso sai daqui quando a Migration B estiver no ar.
 

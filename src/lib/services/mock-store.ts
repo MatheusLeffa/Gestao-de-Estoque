@@ -22,7 +22,46 @@ import type {
   OrderStatusLog,
   RestaurantRecommendationItem,
   RestaurantRecommendationsResponse,
+  CompletionType,
+  KitchenCount,
+  KitchenMovement,
+  KitchenMovementType,
+  KitchenStockItem,
+  KitchenStockResponse,
+  KitchenCountItemPayload,
+  SubmitKitchenCountResponse,
+  RegisterKitchenLossResponse,
+  MissingItemInput,
 } from '@/types/database';
+
+/** Saldo da cozinha por restaurante e insumo: `{ [restaurantId]: { [productId]: linha } }`. */
+type MockKitchenStock = Record<string, Record<string, { quantity: number; lastCountedAt: string | null }>>;
+
+const TERMINAL_STATUSES: OrderStatus[] = ['CONCLUIDO_TOTAL', 'CONCLUIDO_PARCIAL', 'CONCLUIDO_NAO_ENTREGUE', 'CANCELADO'];
+
+const COMPLETION_BY_STATUS: Partial<Record<OrderStatus, CompletionType>> = {
+  CONCLUIDO_TOTAL: 'TOTAL',
+  CONCLUIDO_PARCIAL: 'PARCIAL',
+  CONCLUIDO_NAO_ENTREGUE: 'NAO_ENTREGUE',
+};
+
+/** Janela da média de consumo da cozinha, em dias (igual à RPC get_kitchen_stock). */
+const KITCHEN_CONSUMPTION_WINDOW_DAYS = 7;
+
+/** Evita resíduo de ponto flutuante (0.1 + 0.2) nos saldos simulados. */
+function roundQty(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+/** Data `YYYY-MM-DD` no fuso da operação, para saber se já houve contagem hoje. */
+function saoPauloDay(date: Date): string {
+  return date.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+}
+
+function readJson<T>(key: string, fallback: T): T {
+  const raw = localStorage.getItem(key);
+  return raw ? (JSON.parse(raw) as T) : fallback;
+}
 
 const SEED_PRODUCTS: Product[] = [
   {
@@ -378,6 +417,9 @@ class MockDataStore {
   private products: Product[] = [];
   private orders: Order[] = [];
   private logs: OrderStatusLog[] = [];
+  private kitchenStock: MockKitchenStock = {};
+  private kitchenCounts: KitchenCount[] = [];
+  private kitchenMovements: KitchenMovement[] = [];
   private initialized = false;
 
   private init() {
@@ -391,6 +433,9 @@ class MockDataStore {
       this.products = savedProducts ? JSON.parse(savedProducts) : [...SEED_PRODUCTS];
       this.orders = savedOrders ? JSON.parse(savedOrders) : [...SEED_ORDERS];
       this.logs = savedLogs ? JSON.parse(savedLogs) : [...SEED_LOGS];
+      this.kitchenStock = readJson<MockKitchenStock>('insumosync_mock_kitchen_stock', {});
+      this.kitchenCounts = readJson<KitchenCount[]>('insumosync_mock_kitchen_counts', []);
+      this.kitchenMovements = readJson<KitchenMovement[]>('insumosync_mock_kitchen_movements', []);
     } else {
       this.products = [...SEED_PRODUCTS];
       this.orders = [...SEED_ORDERS];
@@ -405,6 +450,9 @@ class MockDataStore {
       localStorage.setItem('insumosync_mock_products', JSON.stringify(this.products));
       localStorage.setItem('insumosync_mock_orders', JSON.stringify(this.orders));
       localStorage.setItem('insumosync_mock_logs', JSON.stringify(this.logs));
+      localStorage.setItem('insumosync_mock_kitchen_stock', JSON.stringify(this.kitchenStock));
+      localStorage.setItem('insumosync_mock_kitchen_counts', JSON.stringify(this.kitchenCounts));
+      localStorage.setItem('insumosync_mock_kitchen_movements', JSON.stringify(this.kitchenMovements));
     }
   }
 
@@ -635,8 +683,8 @@ class MockDataStore {
     this.init();
     const activeProducts = this.products.filter((p) => p.is_active && p.current_stock > 0);
 
-    // Profile de consumo do restaurante
-    const restaurantProfiles: Record<string, {
+    // Profile base de consumo dos insumos principais do restaurante (usado quando ainda não há histórico de pedidos)
+    const baselineProfiles: Record<string, {
       avgDaily: number;
       lastDaysAgo: number;
       suggested: number;
@@ -646,18 +694,18 @@ class MockDataStore {
       // Salmão Fresco: Estoque crítico no depósito central!
       'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b03': {
         avgDaily: 1.5,
-        lastDaysAgo: 3,
+        lastDaysAgo: 4,
         suggested: 4.0,
         urgency: 'URGENTE',
         reason: 'Estoque baixo no Depósito Central (4 KG restantes). Peça com antecedência antes da ruptura!',
       },
-      // Alface Americana: Entrega anterior parcial, insumo crítico
+      // Alface Americana: Insumo crítico
       'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b07': {
         avgDaily: 1.5,
-        lastDaysAgo: 2,
+        lastDaysAgo: 4,
         suggested: 3.0,
         urgency: 'URGENTE',
-        reason: 'Última entrega foi parcial (faltaram unidades). Sugerido repor o estoque da cozinha agora.',
+        reason: 'Insumo essencial com poucas unidades no estoque central.',
       },
       // Manteiga Extra: Depósito baixo
       'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b11': {
@@ -670,15 +718,15 @@ class MockDataStore {
       // Filé Mignon: Alto consumo do restaurante
       'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b01': {
         avgDaily: 2.5,
-        lastDaysAgo: 1,
+        lastDaysAgo: 3,
         suggested: 10.0,
         urgency: 'RECOMENDADO',
-        reason: 'Consumo elevado no restaurante (prato chefe). Sugerido lote para 4 dias de operação.',
+        reason: 'Consumo elevado no restaurante (prato chefe). Sugerido lote para o ciclo de preparo.',
       },
       // Tomate Italiano: Consumo diário alto
       'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b05': {
         avgDaily: 3.0,
-        lastDaysAgo: 1,
+        lastDaysAgo: 3,
         suggested: 15.0,
         urgency: 'RECOMENDADO',
         reason: 'Consumo diário frequente da cozinha para molhos e saladas.',
@@ -686,7 +734,7 @@ class MockDataStore {
       // Batata Asterix: Consumo alto
       'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b08': {
         avgDaily: 4.0,
-        lastDaysAgo: 2,
+        lastDaysAgo: 3,
         suggested: 20.0,
         urgency: 'RECOMENDADO',
         reason: 'Acompanhamento de alta saída. Reposição recomendada para o turno.',
@@ -694,7 +742,7 @@ class MockDataStore {
       // Cebola Roxa: Rotina
       'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b06': {
         avgDaily: 1.0,
-        lastDaysAgo: 3,
+        lastDaysAgo: 4,
         suggested: 8.0,
         urgency: 'ROTINA',
         reason: 'Item de mercearia e rotina culinária.',
@@ -709,27 +757,126 @@ class MockDataStore {
       },
     };
 
+    // 1. Mapear pedidos deste restaurante
+    const pendingProductIds = new Set<string>();
+    const productOrderHistory: Record<string, { latestOrderTime: number; latestStatus: string; totalQty: number; orderCount: number }> = {};
+
+    const now = Date.now();
+    const windowMs = daysWindow * 86400000;
+
+    for (const order of this.orders) {
+      if (restaurantId && order.restaurant_id !== restaurantId) continue;
+      if (order.status === 'CANCELADO') continue;
+
+      const isPending = ['ABERTO', 'EM_ANALISE', 'EM_ATRASO', 'EM_TRANSITO', 'CANCELAMENTO_PENDENTE'].includes(order.status);
+      const orderTime = new Date(order.created_at).getTime();
+
+      for (const item of order.order_items ?? []) {
+        if (isPending) {
+          pendingProductIds.add(item.product_id);
+        } else if (orderTime >= now - windowMs) {
+          const qty = item.delivered_qty ?? item.approved_qty ?? item.requested_qty ?? 0;
+          const hist = productOrderHistory[item.product_id];
+          if (!hist) {
+            productOrderHistory[item.product_id] = {
+              latestOrderTime: orderTime,
+              latestStatus: order.status,
+              totalQty: qty,
+              orderCount: 1,
+            };
+          } else {
+            hist.totalQty += qty;
+            hist.orderCount += 1;
+            if (orderTime > hist.latestOrderTime) {
+              hist.latestOrderTime = orderTime;
+              hist.latestStatus = order.status;
+            }
+          }
+        }
+      }
+    }
+
     const items: RestaurantRecommendationItem[] = [];
 
     for (const prod of activeProducts) {
-      const profile = restaurantProfiles[prod.id];
-      if (profile) {
-        const cappedQty = Math.min(prod.current_stock, profile.suggested);
-        if (cappedQty > 0) {
-          items.push({
-            product_id: prod.id,
-            name: prod.name,
-            category: prod.category,
-            unit: prod.unit,
-            available_stock: prod.current_stock,
-            avg_daily_consumption: profile.avgDaily,
-            last_ordered_at: new Date(Date.now() - profile.lastDaysAgo * 86400000).toISOString(),
-            days_since_last_order: profile.lastDaysAgo,
-            recommended_order_qty: cappedQty,
-            urgency: profile.urgency,
-            recommendation_reason: profile.reason,
-          });
+      // REGRA 1: Se o restaurante já possui um pedido em andamento (aberto, separação, trânsito),
+      // o insumo é suprimido das sugestões pois a reposição já foi solicitada.
+      if (pendingProductIds.has(prod.id)) {
+        continue;
+      }
+
+      const history = productOrderHistory[prod.id];
+      const baseProfile = baselineProfiles[prod.id];
+
+      let daysSinceLastOrder: number | null = null;
+      let lastOrderedAt: string | null = null;
+      let avgDaily = 0;
+      let suggestedQty = 0;
+      let urgency: 'URGENTE' | 'RECOMENDADO' | 'ROTINA' = 'ROTINA';
+      let reason = '';
+
+      if (history) {
+        daysSinceLastOrder = Number(((now - history.latestOrderTime) / 86400000).toFixed(1));
+        lastOrderedAt = new Date(history.latestOrderTime).toISOString();
+        avgDaily = Number((history.totalQty / daysWindow).toFixed(2));
+        if (avgDaily <= 0 && baseProfile) {
+          avgDaily = baseProfile.avgDaily;
         }
+
+        // REGRA 2: Se o pedido foi concluído/entregue muito recentemente (< 2.0 dias),
+        // o estoque da cozinha foi recém-abastecido. Não recomendar novamente hoje (exceto depósito crítico).
+        if (daysSinceLastOrder < 2.0 && prod.current_stock > prod.min_stock_alert) {
+          continue;
+        }
+
+        suggestedQty = Math.max(1, Math.ceil((avgDaily > 0 ? avgDaily : 1) * 5));
+
+        if (prod.current_stock <= prod.min_stock_alert) {
+          urgency = 'URGENTE';
+          reason = `Estoque baixo no Depósito Central (${prod.current_stock} ${prod.unit} restantes). Peça com antecedência antes da ruptura!`;
+        } else if (daysSinceLastOrder >= 4.0) {
+          urgency = 'URGENTE';
+          reason = `Último pedido há ${Math.round(daysSinceLastOrder)} dias. Consumo frequente, reposição recomendada.`;
+        } else if (daysSinceLastOrder >= 2.0) {
+          urgency = 'RECOMENDADO';
+          reason = `Consumo regular da cozinha. Sugerido lote para o ciclo de preparo.`;
+        } else {
+          urgency = 'ROTINA';
+          reason = `Item de rotina da cozinha. Reposição periódica.`;
+        }
+      } else if (baseProfile) {
+        daysSinceLastOrder = baseProfile.lastDaysAgo;
+        lastOrderedAt = new Date(now - baseProfile.lastDaysAgo * 86400000).toISOString();
+        avgDaily = baseProfile.avgDaily;
+        suggestedQty = baseProfile.suggested;
+        urgency = baseProfile.urgency;
+        reason = baseProfile.reason;
+      } else if (prod.current_stock <= prod.min_stock_alert) {
+        daysSinceLastOrder = null;
+        lastOrderedAt = null;
+        avgDaily = 0.5;
+        suggestedQty = Math.max(1, Math.ceil(prod.min_stock_alert * 0.5));
+        urgency = 'URGENTE';
+        reason = `Estoque baixo no Depósito Central (${prod.current_stock} ${prod.unit}). Solicite antes que esgote.`;
+      } else {
+        continue;
+      }
+
+      const cappedQty = Math.min(prod.current_stock, suggestedQty);
+      if (cappedQty > 0) {
+        items.push({
+          product_id: prod.id,
+          name: prod.name,
+          category: prod.category,
+          unit: prod.unit,
+          available_stock: prod.current_stock,
+          avg_daily_consumption: avgDaily,
+          last_ordered_at: lastOrderedAt,
+          days_since_last_order: daysSinceLastOrder,
+          recommended_order_qty: cappedQty,
+          urgency,
+          recommendation_reason: reason,
+        });
       }
     }
 
@@ -846,12 +993,55 @@ class MockDataStore {
     return { success: true, order_id: orderId };
   }
 
-  transitionOrderStatus(orderId: string, nextStatus: OrderStatus, reason?: string): TransitionOrderStatusResponse {
+  transitionOrderStatus(
+    orderId: string,
+    nextStatus: OrderStatus,
+    reason?: string,
+    missingItems?: MissingItemInput[]
+  ): TransitionOrderStatusResponse {
     this.init();
     const order = this.orders.find((o) => o.id === orderId);
-    if (!order) return { success: false, error: 'Pedido não encontrado' };
+    if (!order) return { success: false, code: 'ORDER_NOT_FOUND', error: 'Pedido não encontrado' };
 
     const fromStatus = order.status;
+    if (TERMINAL_STATUSES.includes(fromStatus)) {
+      return { success: false, code: 'TERMINAL_STATE', error: `Pedido já se encontra em estado final (${fromStatus}).` };
+    }
+
+    // Conferência: calcula delivered_qty antes de qualquer escrita (business-rules seção 5)
+    const completionType = COMPLETION_BY_STATUS[nextStatus];
+    const items = order.order_items ?? [];
+    const delivered = new Map<string, number>();
+    if (completionType) {
+      const missing = new Map<string, number>();
+      if (completionType === 'PARCIAL') {
+        if (!missingItems || missingItems.length === 0) {
+          return { success: false, code: 'MISSING_ITEMS_REQUIRED', error: 'Informe o que faltou em cada item da entrega parcial.' };
+        }
+        for (const m of missingItems) {
+          const item = items.find((i) => i.id === m.itemId);
+          if (!item) {
+            return { success: false, code: 'ITEM_NOT_FOUND', error: 'Item informado não pertence a este pedido.' };
+          }
+          const sent = item.approved_qty ?? item.requested_qty;
+          if (!Number.isFinite(m.missingQty) || m.missingQty < 0 || m.missingQty > sent) {
+            return {
+              success: false,
+              code: 'INVALID_QUANTITY',
+              error: `A falta de "${item.product?.name ?? 'insumo'}" deve estar entre 0 e ${sent}.`,
+            };
+          }
+          missing.set(item.id, m.missingQty);
+        }
+        if (![...missing.values()].some((q) => q > 0)) {
+          return { success: false, code: 'MISSING_ITEMS_REQUIRED', error: 'Nenhuma falta informada: use Entrega Total.' };
+        }
+      }
+      for (const item of items) {
+        const sent = item.approved_qty ?? item.requested_qty;
+        delivered.set(item.id, completionType === 'NAO_ENTREGUE' ? 0 : roundQty(sent - (missing.get(item.id) ?? 0)));
+      }
+    }
 
     // Se for cancelamento, estorna o estoque aprovado
     if (nextStatus === 'CANCELADO' && fromStatus !== 'CANCELADO') {
@@ -868,6 +1058,22 @@ class MockDataStore {
     order.status = nextStatus;
     order.updated_at = new Date().toISOString();
 
+    if (completionType) {
+      order.completion_type = completionType;
+      // Cozinha sem contagem inicial não é creditada (business-rules 5.A.2)
+      const creditKitchen = this.isKitchenInitialized(order.restaurant_id);
+      for (const item of items) {
+        const qty = delivered.get(item.id) ?? 0;
+        item.delivered_qty = qty;
+        if (creditKitchen && qty > 0) {
+          this.applyKitchenMovement(order.restaurant_id, item.product_id, 'ENTRADA_ENTREGA', qty, {
+            orderId: order.id,
+            reason: `Entrega do pedido #${order.id.slice(0, 8).toUpperCase()}`,
+          });
+        }
+      }
+    }
+
     this.logs.unshift({
       id: 'log-' + Date.now(),
       order_id: orderId,
@@ -879,6 +1085,209 @@ class MockDataStore {
 
     this.persist();
     return { success: true, order_id: orderId, from_status: fromStatus, to_status: nextStatus };
+  }
+
+  // ─── Estoque da Cozinha (espelho das RPCs da seção 5.A) ──────────────────
+  private isKitchenInitialized(restaurantId: string): boolean {
+    return this.kitchenCounts.some((c) => c.restaurant_id === restaurantId && c.is_initial);
+  }
+
+  /** Única porta de escrita do saldo simulado: altera a linha e grava o ledger. */
+  private applyKitchenMovement(
+    restaurantId: string,
+    productId: string,
+    type: KitchenMovementType,
+    delta: number,
+    meta: { orderId?: string; countId?: string; reason?: string; countedAt?: string } = {}
+  ) {
+    const rows = (this.kitchenStock[restaurantId] ??= {});
+    const row = (rows[productId] ??= { quantity: 0, lastCountedAt: null });
+    row.quantity = Math.max(0, roundQty(row.quantity + delta));
+    if (meta.countedAt) row.lastCountedAt = meta.countedAt;
+
+    this.kitchenMovements.unshift({
+      id: `km-${Date.now()}-${this.kitchenMovements.length}`,
+      restaurant_id: restaurantId,
+      product_id: productId,
+      type,
+      quantity: roundQty(delta),
+      reason: meta.reason ?? null,
+      order_id: meta.orderId ?? null,
+      count_id: meta.countId ?? null,
+      created_by: null,
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  getKitchenStock(restaurantId: string): KitchenStockResponse {
+    this.init();
+    const rows = this.kitchenStock[restaurantId] ?? {};
+    const counts = this.kitchenCounts.filter((c) => c.restaurant_id === restaurantId);
+    const initial = counts.find((c) => c.is_initial) ?? null;
+    const lastCount = counts.reduce<KitchenCount | null>(
+      (latest, c) => (!latest || c.created_at > latest.created_at ? c : latest),
+      null
+    );
+
+    // Média de consumo: CONSUMO_APURADO dos últimos 7 dias ÷ dias decorridos (máx. 7)
+    const now = Date.now();
+    const windowStart = now - KITCHEN_CONSUMPTION_WINDOW_DAYS * 86400000;
+    const elapsedDays = initial
+      ? Math.max(1, Math.min(KITCHEN_CONSUMPTION_WINDOW_DAYS, (now - new Date(initial.created_at).getTime()) / 86400000))
+      : 1;
+    const consumed: Record<string, number> = {};
+    for (const m of this.kitchenMovements) {
+      if (m.restaurant_id !== restaurantId || m.type !== 'CONSUMO_APURADO') continue;
+      if (new Date(m.created_at).getTime() < windowStart) continue;
+      consumed[m.product_id] = (consumed[m.product_id] ?? 0) + Math.abs(m.quantity);
+    }
+
+    const items: KitchenStockItem[] = this.products
+      .filter((p) => p.is_active || (rows[p.id]?.quantity ?? 0) > 0)
+      .map((p) => ({
+        product_id: p.id,
+        name: p.name,
+        category: p.category,
+        unit: p.unit,
+        image_url: p.image_url ?? null,
+        quantity: rows[p.id]?.quantity ?? 0,
+        last_counted_at: rows[p.id]?.lastCountedAt ?? null,
+        avg_daily_consumption: initial ? Number(((consumed[p.id] ?? 0) / elapsedDays).toFixed(2)) : 0,
+      }))
+      .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
+
+    return {
+      success: true,
+      initialized: !!initial,
+      initial_count_at: initial?.created_at ?? null,
+      last_count_at: lastCount?.created_at ?? null,
+      counted_today: !!lastCount && saoPauloDay(new Date(lastCount.created_at)) === saoPauloDay(new Date()),
+      items,
+    };
+  }
+
+  submitKitchenCount(
+    restaurantId: string,
+    items: KitchenCountItemPayload[],
+    isInitial: boolean
+  ): SubmitKitchenCountResponse {
+    this.init();
+    const initialized = this.isKitchenInitialized(restaurantId);
+
+    if (isInitial && initialized) {
+      return { success: false, code: 'ALREADY_INITIALIZED', error: 'A contagem inicial desta cozinha já foi feita.' };
+    }
+    if (!isInitial && !initialized) {
+      return { success: false, code: 'KITCHEN_NOT_INITIALIZED', error: 'Faça a contagem inicial da cozinha antes.' };
+    }
+    if (!isInitial && items.length === 0) {
+      return { success: false, code: 'EMPTY_COUNT', error: 'Informe o saldo de pelo menos um insumo.' };
+    }
+
+    const seen = new Set<string>();
+    for (const it of items) {
+      if (seen.has(it.product_id)) {
+        return { success: false, code: 'DUPLICATE_PRODUCT', error: 'Insumo repetido na contagem.' };
+      }
+      seen.add(it.product_id);
+      if (!this.products.some((p) => p.id === it.product_id)) {
+        return { success: false, code: 'PRODUCT_NOT_FOUND', error: 'Insumo não encontrado no catálogo.' };
+      }
+      if (!Number.isFinite(it.counted_qty) || it.counted_qty < 0) {
+        return { success: false, code: 'INVALID_QUANTITY', error: 'A quantidade contada não pode ser negativa.' };
+      }
+    }
+
+    const countedAt = new Date().toISOString();
+    const countId = `kc-${Date.now()}`;
+    this.kitchenCounts.unshift({
+      id: countId,
+      restaurant_id: restaurantId,
+      counted_by: null,
+      is_initial: isInitial,
+      items_counted: items.length,
+      created_at: countedAt,
+    });
+
+    let consumedTotal = 0;
+    let adjustedItems = 0;
+
+    if (isInitial) {
+      // Insumos não contados começam com saldo 0, sem movimento (5.A.2)
+      const rows = (this.kitchenStock[restaurantId] = {} as MockKitchenStock[string]);
+      for (const p of this.products.filter((prod) => prod.is_active)) {
+        rows[p.id] = { quantity: 0, lastCountedAt: null };
+      }
+      for (const it of items) {
+        this.applyKitchenMovement(restaurantId, it.product_id, 'CONTAGEM_INICIAL', it.counted_qty, {
+          countId,
+          countedAt,
+        });
+      }
+    } else {
+      const rows = (this.kitchenStock[restaurantId] ??= {});
+      for (const it of items) {
+        const expected = rows[it.product_id]?.quantity ?? 0;
+        const diff = roundQty(expected - it.counted_qty);
+        if (diff > 0) {
+          consumedTotal += diff;
+          this.applyKitchenMovement(restaurantId, it.product_id, 'CONSUMO_APURADO', -diff, { countId, countedAt });
+        } else if (diff < 0) {
+          adjustedItems += 1;
+          this.applyKitchenMovement(restaurantId, it.product_id, 'AJUSTE_POSITIVO', -diff, {
+            countId,
+            countedAt,
+            reason: 'Contado acima do saldo esperado',
+          });
+        } else {
+          (rows[it.product_id] ??= { quantity: 0, lastCountedAt: null }).lastCountedAt = countedAt;
+        }
+      }
+    }
+
+    this.persist();
+    return {
+      success: true,
+      count_id: countId,
+      consumed_total: roundQty(consumedTotal),
+      adjusted_items: adjustedItems,
+      items_counted: items.length,
+    };
+  }
+
+  registerKitchenLoss(
+    restaurantId: string,
+    productId: string,
+    quantity: number,
+    reason: string
+  ): RegisterKitchenLossResponse {
+    this.init();
+    if (!this.isKitchenInitialized(restaurantId)) {
+      return { success: false, code: 'KITCHEN_NOT_INITIALIZED', error: 'Faça a contagem inicial da cozinha antes.' };
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return { success: false, code: 'INVALID_QUANTITY', error: 'A quantidade perdida deve ser maior que zero.' };
+    }
+    if (!reason.trim()) {
+      return { success: false, code: 'REASON_REQUIRED', error: 'Informe o motivo da perda.' };
+    }
+    if (!this.products.some((p) => p.id === productId)) {
+      return { success: false, code: 'PRODUCT_NOT_FOUND', error: 'Insumo não encontrado no catálogo.' };
+    }
+
+    const available = this.kitchenStock[restaurantId]?.[productId]?.quantity ?? 0;
+    if (quantity > available) {
+      return {
+        success: false,
+        code: 'INSUFFICIENT_KITCHEN_STOCK',
+        available,
+        error: `A perda (${quantity}) é maior que o saldo da cozinha (${available}).`,
+      };
+    }
+
+    this.applyKitchenMovement(restaurantId, productId, 'PERDA', -quantity, { reason: reason.trim() });
+    this.persist();
+    return { success: true, product_id: productId, new_quantity: this.kitchenStock[restaurantId][productId].quantity };
   }
 
   // ─── Analytics ─────────────────────────────────────────────────────────────
