@@ -38,7 +38,7 @@ O Tech Lead e todos os subagentes devem obedecer estritamente aos 4 pilares de s
 1. **Zero Secret & Credential Exposure (Proibição Absoluta de Chaves Hardcoded):**
    - É terminantemente proibido commitar, logar, hardcodar ou expor credenciais, API keys, URLs de projetos ou tokens de segurança diretamente no código-fonte, scripts ou fallbacks de código (ex: `process.env.KEY || 'hardcoded_key'`).
    - Toda e qualquer credencial DEVE ser consumida exclusivamente através de variáveis de ambiente (`process.env.*`).
-   - Se uma variável de ambiente necessária estiver ausente, o código deve lançar erro/alerta explícito sem jamais recorrer a chaves reais embutidas como fallback.
+   - Se uma variável de ambiente necessária estiver ausente, o código deve lançar erro/alerta explícito sem jamais recorrer a chaves reais embutidas como fallback. O `next build` aborta sem `NEXT_PUBLIC_SUPABASE_URL` e `NEXT_PUBLIC_SUPABASE_ANON_KEY`; o modo offline (`mock-store`) só existe no `next dev`.
    - O arquivo `.gitignore` deve proteger rigorosamente `.env`, `.env.local` e similares.
 2. **Bloqueio de Comandos Destrutivos:** Bloqueio absoluto de comandos com risco de perda de código (`rm -rf`, `git push --force`, `git reset --hard` sem confirmação explícita).
 3. **Preservação Cirúrgica:** Modificações de código devem ser precisas, preservando comentários, docstrings e estruturas funcionais existentes.

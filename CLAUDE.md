@@ -23,8 +23,10 @@ banco do zero: `supabase/migrations/` em ordem e depois `supabase/seed.sql`.
 **Deploy Vercel:** projeto `insumo-sync` (time `matheus-hilbert`), produção em
 `https://insumosync.vercel.app`. Deploy automático a cada push na `master`; branches e
 PRs geram previews. Variáveis configuradas na Vercel: `NEXT_PUBLIC_SUPABASE_URL` e
-`NEXT_PUBLIC_SUPABASE_ANON_KEY` (só chave anon, nunca `service_role`). Mudou variável?
-É preciso um novo deploy, pois as `NEXT_PUBLIC_*` são embutidas no build.
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` (só chave anon, nunca `service_role`), marcadas para
+**Production e Preview**. Mudou variável? É preciso um novo deploy, pois as `NEXT_PUBLIC_*`
+são embutidas no build. Sem elas, `next build` falha de propósito (`next.config.mjs`); o
+modo offline com `mock-store` existe só no `npm run dev`.
 
 ---
 
