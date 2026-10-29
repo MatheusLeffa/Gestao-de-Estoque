@@ -5,6 +5,7 @@
 import { supabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { mockStore } from '@/lib/services/mock-store';
 import { guardRpcResponse } from '@/lib/services/auth-service';
+import { isTransitionAllowed } from '@/lib/state-machine';
 import type {
   Order,
   OrderStatus,
@@ -19,18 +20,8 @@ import type {
 } from '@/types/database';
 
 // ─── Transições de Status Permitidas (máquina de estados) ────────────────────
-const ALLOWED_TRANSITIONS: Partial<Record<OrderStatus, OrderStatus[]>> = {
-  ABERTO:               ['EM_ANALISE', 'CANCELADO'],
-  EM_ANALISE:           ['EM_TRANSITO', 'EM_ATRASO', 'CANCELAMENTO_PENDENTE', 'CANCELADO'],
-  EM_ATRASO:            ['EM_TRANSITO', 'CANCELAMENTO_PENDENTE', 'CANCELADO', 'EM_ANALISE'],
-  CANCELAMENTO_PENDENTE:['CANCELADO'],
-  EM_TRANSITO:          ['CONCLUIDO_TOTAL', 'CONCLUIDO_PARCIAL', 'CONCLUIDO_NAO_ENTREGUE', 'EM_ATRASO', 'CANCELADO'],
-};
-
-/** Valida se a transição de status é permitida pela máquina de estados */
-export function isTransitionAllowed(from: OrderStatus, to: OrderStatus): boolean {
-  return ALLOWED_TRANSITIONS[from]?.includes(to) ?? false;
-}
+// A matriz vive em @/lib/state-machine; o banco revalida em transition_order_status.
+export { isTransitionAllowed } from '@/lib/state-machine';
 
 // ─── Criação de Pedido com Reserva Atômica ───────────────────────────────────
 

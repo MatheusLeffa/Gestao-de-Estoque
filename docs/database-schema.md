@@ -118,7 +118,7 @@ erDiagram
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PRIMARY KEY DEFAULT gen_random_uuid()` | Identificador único do pedido |
 | `restaurant_id`| `UUID` | `REFERENCES restaurants(id) ON DELETE CASCADE` | Filial solicitante |
-| `status` | `TEXT` | `NOT NULL DEFAULT 'ABERTO'` | Status atual na máquina de estados |
+| `status` | `TEXT` | `NOT NULL DEFAULT 'ABERTO'`, `CHECK` com os 9 status de `state-machine.md` | Status atual na máquina de estados |
 | `delay_reason` | `TEXT` | `NULL` | Motivo de atraso (*Falta de Produto* / *Transporte*) |
 | `completion_type` | `TEXT` | `NULL` | Desfecho da entrega (`TOTAL`, `PARCIAL`, `NAO_ENTREGUE`) |
 | `notes` | `TEXT` | `NULL` | Observações gerais do pedido, escritas pelo restaurante |
@@ -219,7 +219,7 @@ erDiagram
    - Retorna JSON `{ success: boolean, order_id?: uuid, error?: string, code?: string }`.
 
 2. **`transition_order_status(p_order_id uuid, p_new_status text, p_reason text, p_completion_type text, p_missing_items jsonb DEFAULT NULL)`**:
-   - Valida a transição de status permitida na máquina de estados.
+   - Valida a transição pela matriz de `docs/state-machine.md` seção 3 (função `private.is_valid_transition`), para todos os papéis, antes de qualquer escrita.
    - Atualiza `orders.status`, `delay_reason`, `completion_type` e `updated_at`.
    - Se `p_new_status = 'CANCELADO'`, devolve atomicamente ao estoque o saldo retido —
      `COALESCE(approved_qty, requested_qty)`, **nunca `requested_qty` puro** — e grava `stock_movements`.
@@ -228,7 +228,7 @@ erDiagram
      e pelo menos uma falta. Se a cozinha já fez a contagem inicial, credita `delivered_qty` em
      `kitchen_stock` com `ENTRADA_ENTREGA`, na mesma transação.
    - Grava registro de auditoria em `order_status_logs`.
-   - Códigos de erro: `ORDER_NOT_FOUND`, `TERMINAL_STATE`, `MISSING_ITEMS_REQUIRED`, `INVALID_QUANTITY`, `ITEM_NOT_FOUND`.
+   - Códigos de erro: `ORDER_NOT_FOUND`, `INVALID_STATUS`, `TERMINAL_STATE`, `INVALID_TRANSITION`, `MISSING_ITEMS_REQUIRED`, `INVALID_QUANTITY`, `ITEM_NOT_FOUND`.
 
 3. **`restock_product(p_product_id uuid, p_quantity numeric, p_reason text)`**:
    - Incrementa `current_stock` em `products` e insere `stock_movements` com `ENTRADA_MANUAL`.
