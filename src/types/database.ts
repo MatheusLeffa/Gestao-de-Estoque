@@ -111,12 +111,22 @@ export interface PlaceOrderResponse {
   requested_qty?: number;
 }
 
+/** Códigos de erro de `transition_order_status` (state-machine.md seção 3). */
+export type TransitionErrorCode =
+  | 'ORDER_NOT_FOUND'
+  | 'INVALID_STATUS'
+  | 'TERMINAL_STATE'
+  | 'INVALID_TRANSITION'
+  | 'MISSING_ITEMS_REQUIRED'
+  | 'INVALID_QUANTITY'
+  | 'ITEM_NOT_FOUND';
+
 export interface TransitionOrderStatusResponse {
   success: boolean;
   order_id?: string;
   from_status?: OrderStatus;
   to_status?: OrderStatus;
-  code?: string;
+  code?: TransitionErrorCode | RpcAuthErrorCode | string;
   error?: string;
 }
 

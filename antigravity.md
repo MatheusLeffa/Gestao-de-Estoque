@@ -175,24 +175,32 @@ O `select` nativo é uma escolha deliberada — em mobile ele abre a roleta do p
 
 ## 🔄 4. Máquina de Estados, Concorrência e Auditoria
 
+> A matriz de transições é **validada no banco** (`private.is_valid_transition`), para todos os papéis, inclusive o `admin`, e `orders.status` tem `CHECK` com os 9 status. Detalhes, papéis e condições de guarda em [`docs/state-machine.md`](docs/state-machine.md).
+
 ```mermaid
 stateDiagram-v2
     [*] --> ABERTO : Restaurante cria Pedido (Reserva Estoque Atômica)
     ABERTO --> EM_ANALISE : Estoque inicia separação
-    ABERTO --> CANCELADO : Restaurante cancela (Devolve Estoque)
-    
+    ABERTO --> CANCELADO : Restaurante ou Estoque cancela (Devolve Estoque)
+
     EM_ANALISE --> EM_TRANSITO : Estoque despacha
-    EM_ANALISE --> EM_ATRASO : Estoque aponta atraso (Falta Produto / Transporte)
+    EM_ANALISE --> EM_ATRASO : Estoque aponta atraso (+ justificativa)
     EM_ANALISE --> CANCELAMENTO_PENDENTE : Restaurante solicita cancelamento
-    
-    CANCELAMENTO_PENDENTE --> CANCELADO : Estoque valida não despachado (Devolve Estoque)
-    
-    EM_ATRASO --> EM_TRANSITO : Estoque resolve e despacha
+    EM_ANALISE --> CANCELADO : Estoque cancela (+ justificativa)
+
     EM_ATRASO --> EM_ANALISE : Retoma triagem
-    
+    EM_ATRASO --> EM_TRANSITO : Estoque resolve e despacha
+    EM_ATRASO --> CANCELAMENTO_PENDENTE : Restaurante solicita cancelamento
+    EM_ATRASO --> CANCELADO : Estoque cancela (+ justificativa)
+
+    CANCELAMENTO_PENDENTE --> CANCELADO : Estoque aprova (Devolve Estoque)
+    CANCELAMENTO_PENDENTE --> EM_ANALISE : Estoque recusa (sem tela ainda)
+
     EM_TRANSITO --> CONCLUIDO_TOTAL : Restaurante confere tudo OK
-    EM_TRANSITO --> CONCLUIDO_PARCIAL : Restaurante confere com faltas (+ justificativa)
+    EM_TRANSITO --> CONCLUIDO_PARCIAL : Restaurante confere com faltas (item a item + justificativa)
     EM_TRANSITO --> CONCLUIDO_NAO_ENTREGUE : Restaurante recusa / extravio (+ motivo)
+    EM_TRANSITO --> EM_ATRASO : Estoque aponta atraso na rota
+    EM_TRANSITO --> CANCELADO : Estoque cancela (Devolve Estoque)
 ```
 
 ### ⚡ Regra de Concorrência (Race Condition):

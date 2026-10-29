@@ -33,6 +33,7 @@ import type {
   RegisterKitchenLossResponse,
   MissingItemInput,
 } from '@/types/database';
+import { ORDER_STATUSES, isTransitionAllowed } from '@/lib/state-machine';
 
 /** Saldo da cozinha por restaurante e insumo: `{ [restaurantId]: { [productId]: linha } }`. */
 type MockKitchenStock = Record<string, Record<string, { quantity: number; lastCountedAt: string | null }>>;
@@ -1004,8 +1005,15 @@ class MockDataStore {
     if (!order) return { success: false, code: 'ORDER_NOT_FOUND', error: 'Pedido não encontrado' };
 
     const fromStatus = order.status;
+    // Mesma ordem de checagem de private.transition_order_status
+    if (!ORDER_STATUSES.includes(nextStatus)) {
+      return { success: false, code: 'INVALID_STATUS', error: `Status desconhecido: ${nextStatus}.` };
+    }
     if (TERMINAL_STATUSES.includes(fromStatus)) {
       return { success: false, code: 'TERMINAL_STATE', error: `Pedido já se encontra em estado final (${fromStatus}).` };
+    }
+    if (!isTransitionAllowed(fromStatus, nextStatus)) {
+      return { success: false, code: 'INVALID_TRANSITION', error: `Não é possível passar de ${fromStatus} para ${nextStatus}.` };
     }
 
     // Conferência: calcula delivered_qty antes de qualquer escrita (business-rules seção 5)
